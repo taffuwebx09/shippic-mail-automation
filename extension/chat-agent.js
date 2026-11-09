@@ -169,25 +169,48 @@ function findExactWaybillNodes(waybill) {
 }
 
 function findPhotoFollowingWaybill(waybillNode, waybill) {
-  const numberRect = waybillNode.getBoundingClientRect();
-  const photos = getVisibleShipmentPhotos(document).map((img) => {
-    const rect = img.getBoundingClientRect();
-    return { img, top: rect.top, gap: rect.top - numberRect.bottom, left: rect.left };
-  }).filter((photo) => photo.gap >= -24 && photo.gap <= 1600);
+  /*
+   * Pair by message/timeline DOM order, NOT sender identity or screen position.
+   * In SHIP PIC3, the shipment number is posted first and the evidence photo
+   * follows it. The image may be posted by another member of the group.
+   */
+  const allShipmentNumbers = findShipmentNumberNodes();
+  const followingNumbers = allShipmentNumbers.filter((node) =>
+    isDomAfter(waybillNode, node) && normalized(node.textContent) !== waybill
+  );
 
-  // A different waybill between this number and a photo means that photo belongs
-  // to the later shipment. Sender identity is intentionally not considered.
-  const nextWaybillTop = Array.from(document.querySelectorAll("body *"))
-    .filter((el) => el.children.length <= 2 && visible(el))
-    .map((el) => ({ text: normalized(el.innerText || el.textContent), top: el.getBoundingClientRect().top }))
-    .filter((item) => /^\d{8,25}$/.test(item.text) && item.text !== waybill && item.top > numberRect.bottom + 2)
-    .reduce((min, item) => Math.min(min, item.top), Infinity);
+  const photos = getVisibleShipmentPhotos(document);
+  const followingPhotos = photos.filter((img) => isDomAfter(waybillNode, img));
 
-  return photos
-    .filter((photo) => photo.top < nextWaybillTop)
-    .sort((a, b) => a.gap - b.gap)[0]?.img || null;
+  // The next shipment-number message is a hard boundary: never steal its photo.
+  for (const photo of followingPhotos) {
+    const nextNumberBeforePhoto = followingNumbers.some((numberNode) =>
+      isDomAfter(waybillNode, numberNode) && isDomAfter(numberNode, photo)
+    );
+    if (!nextNumberBeforePhoto) {
+      // Keep the image association anchored to the message's DOM order.
+      return photo;
+    }
+    // The first following photo belongs after another waybill: stop this match.
+    return null;
+  }
+  return null;
 }
 
+function isDomAfter(anchor, candidate) {
+  if (!anchor || !candidate || anchor === candidate) return false;
+  return Boolean(anchor.compareDocumentPosition(candidate) & Node.DOCUMENT_POSITION_FOLLOWING);
+}
+
+function findShipmentNumberNodes() {
+  const candidates = Array.from(document.querySelectorAll("body *"))
+    .filter((el) => visible(el) && /^\\d{8,25}$/.test(normalized(el.textContent)));
+
+  // Prefer the smallest text-bearing node; discard wrapper duplicates.
+  return candidates.filter((el) => !Array.from(el.children).some((child) =>
+    /^\\d{8,25}$/.test(normalized(child.textContent))
+  ));
+}
 function getVisibleShipmentPhotos(root) {
   return Array.from(root.querySelectorAll("img"))
     .filter((img) => visible(img) && img.complete && img.naturalWidth > 80 && img.naturalHeight > 80)
