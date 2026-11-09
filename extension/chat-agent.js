@@ -100,10 +100,12 @@ function hasTargetGroupAndWaybill(el, waybill) {
 }
 
 async function waitForTargetGroupResult(waybill) {
-  for (let attempt = 0; attempt < 60; attempt++) {
+  // Chat search results are rendered asynchronously. Poll quickly, but keep a
+  // reasonable ceiling for slower RPC/Google Chat connections.
+  for (let attempt = 0; attempt < 70; attempt++) {
     const row = findTargetGroupResult(waybill);
     if (row) return row;
-    await sleep(250);
+    await sleep(150);
   }
   return null;
 }
@@ -115,22 +117,36 @@ function findTargetGroupResult(waybill) {
   const candidates = new Set();
   for (const leaf of numberLeaves) {
     let el = leaf;
-    for (let depth = 0; depth < 14 && el && el !== document.body; depth++, el = el.parentElement) {
+    for (let depth = 0; depth < 12 && el && el !== document.body; depth++, el = el.parentElement) {
       if (!visible(el) || !hasTargetGroupAndWaybill(el, waybill)) continue;
       const rect = el.getBoundingClientRect();
-      // Avoid treating the full search-results page as the selectable result.
-      if (rect.width >= 170 && rect.width <= window.innerWidth * 0.99 && rect.height >= 32 && rect.height <= 650) {
+      // Candidate must look like one result card, not the complete result list.
+      if (rect.width >= 170 && rect.width <= window.innerWidth * 0.99 &&
+          rect.height >= 32 && rect.height <= 480) {
         candidates.add(el);
       }
     }
   }
 
+  /*
+   * Google Chat can return multiple SHIP PIC3 hits (including repeated posts).
+   * Pick the first result in the visible result-list order (top-to-bottom).
+   * Within that same row, prefer the semantic clickable node and then the
+   * smallest bounded wrapper. Other groups and later duplicate hits are ignored.
+   */
   const ranked = Array.from(candidates).map((el) => {
     const r = el.getBoundingClientRect();
     const role = el.getAttribute("role") || "";
     const semanticClick = /^(listitem|button|link|option)$/i.test(role) || el.hasAttribute("tabindex");
-    return { el, area: r.width * r.height, semanticClick, textLength: normalized(el.innerText || el.textContent).length };
-  }).sort((a, b) => Number(b.semanticClick) - Number(a.semanticClick) || a.area - b.area || a.textLength - b.textLength);
+    return { el, top: r.top, left: r.left, area: r.width * r.height, semanticClick,
+      textLength: normalized(el.innerText || el.textContent).length };
+  }).sort((a, b) =>
+    a.top - b.top ||
+    a.left - b.left ||
+    Number(b.semanticClick) - Number(a.semanticClick) ||
+    a.area - b.area ||
+    a.textLength - b.textLength
+  );
 
   return ranked[0]?.el || null;
 }
@@ -146,18 +162,18 @@ function clickResult(el) {
 }
 
 async function waitForMessagePhoto(waybill) {
-  for (let attempt = 0; attempt < 70; attempt++) {
-    const groupTitleVisible = normalized(document.body.innerText).includes(normalized(GROUP_NAME));
-    if (groupTitleVisible) {
+  // The Chat conversation can render the text before the attachment image.
+  // Check frequently for a fast response while allowing lazy-loaded images time.
+  for (let attempt = 0; attempt < 90; attempt++) {
+    if (normalized(document.body.innerText).includes(normalized(GROUP_NAME))) {
       const nodes = findExactWaybillNodes(waybill);
       for (const node of nodes) {
         node.scrollIntoView({ block: "center", inline: "nearest" });
-        await sleep(120);
         const image = findPhotoFollowingWaybill(node, waybill);
         if (image) return { messageNode: node, image };
       }
     }
-    await sleep(250);
+    await sleep(150);
   }
   return null;
 }
