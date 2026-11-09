@@ -1,4 +1,3 @@
-// Bridge between the ShipPic website and its extension service worker.
 window.addEventListener("message", (event) => {
   if (event.source !== window || event.origin !== window.location.origin) return;
   const data = event.data;
@@ -14,14 +13,11 @@ window.addEventListener("message", (event) => {
     chrome.runtime.sendMessage({
       type: "SEARCH_WAYBILL",
       waybill: data.waybill,
-      chatUrl: "https://chat.google.com/app/chat/AAAA88R6rOc",
-      appTabId: null
+      chatUrl: "https://chat.google.com/app/chat/AAAA88R6rOc"
     }, (response) => {
       if (chrome.runtime.lastError) {
         window.postMessage({ source: "shippic-extension", type: "SEARCH_ERROR", message: "Extension isn't responding. Check that it's enabled, then reload this page." }, window.location.origin);
-        return;
-      }
-      if (response?.error) {
+      } else if (response?.error) {
         window.postMessage({ source: "shippic-extension", type: "SEARCH_ERROR", message: response.error }, window.location.origin);
       }
     });
@@ -31,8 +27,7 @@ window.addEventListener("message", (event) => {
 chrome.runtime.onMessage.addListener((message) => {
   if (message?.type === "SHIP_PIC_RESULT") {
     window.postMessage({ source: "shippic-extension", type: "SEARCH_RESULT", waybill: message.waybill, imageDataUrl: message.imageDataUrl, message: message.message }, window.location.origin);
-  }
-  if (message?.type === "SHIP_PIC_ERROR") {
+  } else if (message?.type === "SHIP_PIC_ERROR") {
     window.postMessage({ source: "shippic-extension", type: "SEARCH_ERROR", message: message.message }, window.location.origin);
   }
 });
