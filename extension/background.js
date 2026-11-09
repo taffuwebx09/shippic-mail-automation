@@ -99,6 +99,8 @@ async function findTargetSpace(token) {
 }
 
 async function listAllMessages(token, spaceName) {
+  // Google Chat messages.list defaults to createTime ASC. Keep orderBy omitted:
+  // this avoids sending an unnecessary orderBy query parameter and preserves chronology.
   const all = [];
   let pageToken = "";
   do {
