@@ -4,7 +4,7 @@ window.addEventListener("message", (event) => {
   if (!data || data.source !== "shippic-web") return;
 
   if (data.type === "PING_EXTENSION") {
-    window.postMessage({ source: "shippic-extension", type: "EXTENSION_READY" }, window.location.origin);
+    window.postMessage({ source: "shippic-extension", type: "EXTENSION_READY", extensionVersion: chrome.runtime.getManifest().version }, window.location.origin);
     return;
   }
 
