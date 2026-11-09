@@ -6,7 +6,7 @@ const MAX_IMAGE_BYTES = 12 * 1024 * 1024;
 chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
   if (message?.type === "SEARCH_WAYBILL") {
     const waybill = String(message.waybill || "").trim().replace(/^'+/, "");
-    if (!/^\\d{8,25}$/.test(waybill)) {
+    if (!/^\d{8,25}$/.test(waybill)) {
       sendResponse({ error: "Please enter a valid waybill number." });
       return;
     }
@@ -61,7 +61,7 @@ function getOfficeAccountToken() {
 }
 
 async function chatApi(token, path, params = {}) {
-  const url = new URL("https://chat.googleapis.com/v1/" + path.replace(/^\\//, ""));
+  const url = new URL("https://chat.googleapis.com/v1/" + path.replace(/^\//, ""));
   for (const [key, value] of Object.entries(params)) {
     if (value !== undefined && value !== null && value !== "") url.searchParams.set(key, value);
   }
@@ -119,17 +119,17 @@ async function listAllMessages(token, spaceName) {
 function messageText(message) {
   return String(message.text || message.formattedText || "")
     .replace(/<[^>]*>/g, " ")
-    .replace(/\\s+/g, " ")
+    .replace(/\s+/g, " ")
     .trim();
 }
 
 function containsWaybill(message, waybill) {
   const text = messageText(message);
-  return text.split(/\\D+/).includes(waybill);
+  return text.split(/\D+/).includes(waybill);
 }
 
 function hasAnyWaybill(message) {
-  return /(?:^|\\D)\\d{8,25}(?:\\D|$)/.test(messageText(message));
+  return /(?:^|\D)\d{8,25}(?:\D|$)/.test(messageText(message));
 }
 
 function imageAttachment(message) {
