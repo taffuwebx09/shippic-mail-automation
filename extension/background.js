@@ -29,11 +29,11 @@ async function lookupShipmentPhoto(waybill) {
   if (!messages.length) throw new Error("SHIP PIC3 is accessible, but it contains no readable messages.");
 
   const targetIndex = findFirstValidOccurrence(messages, waybill);
-  if (targetIndex < 0) {
+  if (!targetIndex) {
     throw new Error("No valid photo match found for this waybill in SHIP PIC3. Checked the exact waybill occurrences and the following timeline messages.");
   }
 
-  const candidate = messages[targetIndex];
+  const candidate = targetIndex;
   const photo = await downloadMessageImage(token, candidate.attachment);
   return {
     imageDataUrl: photo,
@@ -162,7 +162,7 @@ function findFirstValidOccurrence(messages, waybill) {
 async function downloadMessageImage(token, attachment) {
   const resourceName = attachment.attachmentDataRef.resourceName;
   const url = "https://chat.googleapis.com/v1/media/" +
-    encodeURIComponent(resourceName) + "?alt=media";
+    resourceName.split("/").map(encodeURIComponent).join("/") + "?alt=media";
   const response = await fetch(url, {
     headers: { Authorization: "Bearer " + token }
   });
