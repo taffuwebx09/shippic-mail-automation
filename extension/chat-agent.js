@@ -1,11 +1,9 @@
 /*
  * ShipPic Google Chat automation.
- * Flow: focus Chat search -> fill waybill -> submit automatically -> wait for results
- * -> identify the exact waybill -> locate the image immediately below it -> return image bytes.
- *
- * Google Chat is a dynamic UI; selectors and message grouping can change. The script
- * uses visible DOM + geometric association rather than assuming the image is inside
- * the same text node's parent.
+ * Runs in an inactive Chat tab. Searches the waybill, opens the matching search
+ * conversation in that background tab, then extracts the photo below the waybill.
+ * Google Chat's markup changes often, so this is intentionally DOM-driven and needs
+ * a live test against the user's tenant.
  */
 const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 
@@ -20,143 +18,177 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
 
 async function findShipmentImage(waybill) {
   if (!/^\d{8,25}$/.test(String(waybill || ""))) throw new Error("Waybill format is invalid.");
-  await waitForChatReady();
+  await wait(1200);
 
-  const searchBox = findChatSearchBox();
-  if (!searchBox) {
-    throw new Error("Could not find Google Chat's Search chat field. Open SHIP PIC3 in Chat and retry.");
-  }
+  let searchBox = findSearchBox();
+  if (!searchBox) throw new Error("Google Chat search field was not detected in the background tab.");
 
-  fillSearchBox(searchBox, waybill);
+  setInput(searchBox, waybill);
   await sleep(250);
+  pressEnter(searchBox);
 
-  // Submit by keyboard and click the visible search action as a fallback when Chat's
-  // UI intercepts synthetic keyboard events.
-  searchBox.dispatchEvent(new KeyboardEvent("keydown", { key: "Enter", code: "Enter", keyCode: 13, which: 13, bubbles: true }));
-  searchBox.dispatchEvent(new KeyboardEvent("keypress", { key: "Enter", code: "Enter", keyCode: 13, which: 13, bubbles: true }));
-  searchBox.dispatchEvent(new KeyboardEvent("keyup", { key: "Enter", code: "Enter", keyCode: 13, which: 13, bubbles: true }));
-
-  await waitForSearchResults(waybill);
-
-  const matches = findExactWaybillNodes(waybill);
-  if (!matches.length) {
-    throw new Error("Search was submitted automatically, but no exact waybill result appeared. Check the Chat search result and try once more.");
+  // First result view is often the Conversations list. Click the result row whose
+  // snippet includes this exact waybill to enter the related group/message.
+  const resultRow = await waitForConversationResult(waybill);
+  if (resultRow) {
+    clickLikeUser(resultRow);
+    await sleep(1400);
   }
 
-  const photo = findPhotoImmediatelyAfter(matches);
-  if (!photo) {
-    throw new Error("The exact waybill was found, but its photo below the message could not be identified. This Chat result layout needs selector tuning.");
+  // Wait for the conversation message and its attachment thumbnail to render.
+  const messageNode = await waitForExactMessage(waybill);
+  if (!messageNode) {
+    throw new Error("Google Chat search returned the waybill, but its message did not load in the conversation.");
   }
 
-  const imageDataUrl = await fetchImageDataUrl(photo.currentSrc || photo.src);
-  return { imageDataUrl, message: "Shipment image associated with the exact waybill was transferred to the website." };
+  const image = findImageAfterMessage(messageNode);
+  if (!image) {
+    throw new Error("The waybill message opened, but its shipment photo wasn't detected below it.");
+  }
+  return {
+    imageDataUrl: await imageToDataUrl(image.currentSrc || image.src),
+    message: "Shipment photo retrieved from the matching SHIP PIC3 message."
+  };
 }
 
-async function waitForChatReady() {
-  for (let i = 0; i < 30; i++) {
-    if (document.readyState !== "loading" && findChatSearchBox()) return;
-    await sleep(300);
-  }
-}
-
-function findChatSearchBox() {
-  const candidates = Array.from(document.querySelectorAll('input,[role="searchbox"],[contenteditable="true"]'));
-  return candidates.find((el) => {
-    const hint = (el.getAttribute("placeholder") || "") + " " + (el.getAttribute("aria-label") || "") + " " + (el.getAttribute("data-placeholder") || "");
-    const rect = el.getBoundingClientRect();
-    return /search chat/i.test(hint) && rect.width > 0 && rect.height > 0;
-  }) || candidates.find((el) => {
-    const hint = (el.getAttribute("placeholder") || "") + " " + (el.getAttribute("aria-label") || "");
-    const rect = el.getBoundingClientRect();
-    return /^search$/i.test(hint.trim()) && rect.width > 0 && rect.height > 0;
+function findSearchBox() {
+  const nodes = Array.from(document.querySelectorAll('input,[role="searchbox"],[contenteditable="true"]'));
+  return nodes.find((el) => {
+    const hint = [el.getAttribute("placeholder"), el.getAttribute("aria-label"), el.getAttribute("data-placeholder")].filter(Boolean).join(" ");
+    return /search chat/i.test(hint) && visible(el);
+  }) || nodes.find((el) => {
+    const hint = [el.getAttribute("placeholder"), el.getAttribute("aria-label")].filter(Boolean).join(" ");
+    return /^search$/i.test(hint.trim()) && visible(el);
   });
 }
 
-function fillSearchBox(element, value) {
-  element.focus();
-  if (element instanceof HTMLInputElement || element instanceof HTMLTextAreaElement) {
-    const proto = element instanceof HTMLTextAreaElement ? HTMLTextAreaElement.prototype : HTMLInputElement.prototype;
+function setInput(el, value) {
+  el.focus();
+  if (el instanceof HTMLInputElement || el instanceof HTMLTextAreaElement) {
+    const proto = el instanceof HTMLTextAreaElement ? HTMLTextAreaElement.prototype : HTMLInputElement.prototype;
     const setter = Object.getOwnPropertyDescriptor(proto, "value")?.set;
-    if (setter) setter.call(element, value);
-    else element.value = value;
+    setter ? setter.call(el, value) : (el.value = value);
   } else {
-    element.textContent = value;
-    element.dispatchEvent(new InputEvent("beforeinput", { bubbles: true, inputType: "insertText", data: value }));
+    el.textContent = value;
   }
-  element.dispatchEvent(new InputEvent("input", { bubbles: true, inputType: "insertText", data: value }));
-  element.dispatchEvent(new Event("change", { bubbles: true }));
+  el.dispatchEvent(new InputEvent("input", { bubbles: true, inputType: "insertText", data: value }));
+  el.dispatchEvent(new Event("change", { bubbles: true }));
 }
 
-async function waitForSearchResults(waybill) {
-  // Wait up to ~9 seconds for exact result text; Google Chat can take a moment.
-  for (let i = 0; i < 30; i++) {
-    if (findExactWaybillNodes(waybill).length) {
-      await sleep(650); // allow attachment thumbnails to render
-      return;
+function pressEnter(el) {
+  for (const type of ["keydown", "keypress", "keyup"]) {
+    el.dispatchEvent(new KeyboardEvent(type, { key: "Enter", code: "Enter", keyCode: 13, which: 13, bubbles: true }));
+  }
+}
+
+async function waitForConversationResult(waybill) {
+  for (let i = 0; i < 35; i++) {
+    const leaf = Array.from(document.querySelectorAll("body *"))
+      .filter((el) => el.children.length === 0 && el.textContent?.includes(waybill) && visible(el))
+      .find((el) => {
+        const ancestor = el.closest('[role="listitem"],[role="option"],[role="button"],a') || clickableAncestor(el);
+        return ancestor && ancestor !== document.body;
+      });
+    if (leaf) {
+      const row = leaf.closest('[role="listitem"],[role="option"],[role="button"],a') || clickableAncestor(leaf);
+      if (row) return row;
     }
     await sleep(300);
   }
+  return null;
 }
 
-function findExactWaybillNodes(waybill) {
+function clickableAncestor(el) {
+  let current = el;
+  for (let i = 0; i < 8 && current && current !== document.body; i++, current = current.parentElement) {
+    if (current.getAttribute("role") === "button" || current.getAttribute("role") === "link" ||
+        current.hasAttribute("tabindex") || current.tagName === "A" || current.onclick) return current;
+  }
+  // Search result rows in Chat are often divs without semantic roles. Return a compact
+  // parent that contains the matching snippet, not a large page-level container.
+  current = el;
+  for (let i = 0; i < 5 && current?.parentElement; i++, current = current.parentElement) {
+    if (current.getBoundingClientRect().height > 35 && current.getBoundingClientRect().height < 260) return current;
+  }
+  return null;
+}
+
+function clickLikeUser(el) {
+  el.scrollIntoView({ block: "center", inline: "nearest" });
+  el.dispatchEvent(new MouseEvent("mousedown", { bubbles: true, view: window }));
+  el.dispatchEvent(new MouseEvent("mouseup", { bubbles: true, view: window }));
+  el.click();
+}
+
+async function waitForExactMessage(waybill) {
+  for (let i = 0; i < 45; i++) {
+    const nodes = exactWaybillNodes(waybill);
+    if (nodes.length) {
+      // Give Google Chat attachment thumbnails time to load after the message appears.
+      await sleep(850);
+      return nodes[0];
+    }
+    await sleep(300);
+  }
+  return null;
+}
+
+function exactWaybillNodes(waybill) {
   return Array.from(document.querySelectorAll("body *"))
-    .filter((el) => el.children.length === 0 && el.textContent?.trim() === waybill)
-    .filter(isVisible)
-    .sort((a, b) => {
-      const ra = a.getBoundingClientRect(), rb = b.getBoundingClientRect();
-      return ra.top - rb.top || ra.left - rb.left;
-    });
+    .filter((el) => el.children.length === 0 && el.textContent?.trim() === waybill && visible(el))
+    .sort((a, b) => a.getBoundingClientRect().top - b.getBoundingClientRect().top);
 }
 
-function isVisible(element) {
-  const rect = element.getBoundingClientRect();
-  const style = getComputedStyle(element);
+function findImageAfterMessage(textNode) {
+  // Prefer images in the nearest compact message container.
+  let root = textNode;
+  for (let depth = 0; depth < 7 && root.parentElement; depth++) {
+    root = root.parentElement;
+    const imgs = validImages(root);
+    const nearestBelow = imgs
+      .map((img) => ({ img, gap: img.getBoundingClientRect().top - textNode.getBoundingClientRect().bottom }))
+      .filter(({ gap }) => gap >= -20 && gap < 1400)
+      .sort((a, b) => a.gap - b.gap)[0];
+    if (nearestBelow) return nearestBelow.img;
+    if (root.getBoundingClientRect().height > 1500) break;
+  }
+
+  // Fallback: nearby image geometry within the visible conversation area.
+  const textRect = textNode.getBoundingClientRect();
+  return validImages(document)
+    .map((img) => {
+      const rect = img.getBoundingClientRect();
+      const gap = rect.top - textRect.bottom;
+      const horizontal = Math.abs(rect.left - textRect.left);
+      return { img, gap, horizontal, score: gap + horizontal * 0.2 };
+    })
+    .filter(({ gap, horizontal }) => gap >= -20 && gap < 1500 && horizontal < Math.max(700, innerWidth * 0.6))
+    .sort((a, b) => a.score - b.score)[0]?.img || null;
+}
+
+function validImages(root) {
+  return Array.from(root.querySelectorAll("img"))
+    .filter((img) => visible(img) && img.complete && img.naturalWidth > 80 && img.naturalHeight > 80)
+    .filter((img) => !/avatar|profile|emoji|logo/i.test((img.alt || "") + " " + (img.getAttribute("aria-label") || "")));
+}
+
+function visible(el) {
+  const rect = el.getBoundingClientRect();
+  const style = getComputedStyle(el);
   return rect.width > 0 && rect.height > 0 && style.visibility !== "hidden" && style.display !== "none";
 }
 
-function findPhotoImmediatelyAfter(matches) {
-  const images = Array.from(document.querySelectorAll("img"))
-    .filter((img) => isVisible(img) && img.complete && img.naturalWidth > 80 && img.naturalHeight > 80)
-    .filter((img) => !/avatar|profile|emoji|logo/i.test(img.alt || ""))
-    .filter((img) => !/avatar|profile|emoji/i.test(img.getAttribute("aria-label") || ""));
-
-  let best = null;
-  let bestScore = Infinity;
-
-  for (const match of matches) {
-    const textRect = match.getBoundingClientRect();
-    for (const img of images) {
-      const imageRect = img.getBoundingClientRect();
-      const verticalGap = imageRect.top - textRect.bottom;
-      // User's established Chat pattern is waybill text followed by the photo.
-      if (verticalGap < -12 || verticalGap > 1800) continue;
-
-      const horizontalDistance = Math.abs((imageRect.left + imageRect.width / 2) - (textRect.left + textRect.width / 2));
-      // Keep the candidate in the same side/column of the Chat conversation.
-      if (horizontalDistance > Math.max(650, window.innerWidth * 0.55)) continue;
-
-      // Prefer the closest image below the waybill; small horizontal mismatch is secondary.
-      const score = verticalGap + horizontalDistance * 0.18;
-      if (score < bestScore) {
-        best = img;
-        bestScore = score;
-      }
-    }
-  }
-  return best;
-}
-
-async function fetchImageDataUrl(url) {
-  if (!url) throw new Error("The matching Chat image URL was empty.");
+async function imageToDataUrl(url) {
+  if (!url) throw new Error("Image source is missing.");
   const response = await fetch(url, { credentials: "include" });
-  if (!response.ok) throw new Error("Google Chat image retrieval failed (" + response.status + ").");
+  if (!response.ok) throw new Error("Could not retrieve the Chat image (" + response.status + ").");
   const blob = await response.blob();
-  if (!blob.type.startsWith("image/")) throw new Error("The selected Chat attachment is not an image.");
-  if (blob.size > 12 * 1024 * 1024) throw new Error("The shipment image is larger than 12 MB.");
-  return await new Promise((resolve, reject) => {
+  if (!blob.type.startsWith("image/")) throw new Error("The retrieved attachment is not an image.");
+  if (blob.size > 12 * 1024 * 1024) throw new Error("The shipment image is over the 12 MB limit.");
+  return new Promise((resolve, reject) => {
     const reader = new FileReader();
     reader.onload = () => resolve(reader.result);
-    reader.onerror = () => reject(new Error("Could not convert the shipment image for the website."));
+    reader.onerror = () => reject(new Error("Could not convert the shipment photo for the website."));
     reader.readAsDataURL(blob);
   });
 }
