@@ -12,12 +12,23 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
     (async () => {
       try {
         const chatTabs = await chrome.tabs.query({ url: "https://chat.google.com/app/chat/*" });
-        let chatTab = chatTabs.find((tab) => (tab.url || "").includes("AAAA88R6rOc"));
+
+        /*
+         * Never automate the user's currently visible Chat tab. Reuse a
+         * non-active SHIP PIC3 tab if available; otherwise create a dedicated
+         * inactive tab. This avoids changing the foreground Chat conversation
+         * while the user stays on ShipPic.
+         */
+        let chatTab = chatTabs.find((tab) =>
+          !tab.active && (tab.url || "").includes("AAAA88R6rOc")
+        );
+
         if (!chatTab) {
           chatTab = await chrome.tabs.create({ url: CHAT_GROUP_URL, active: false });
           await waitForTab(chatTab.id);
         }
-        // Keep Chat in a background tab; never activate it.
+
+        // Explicitly preserve inactive status before running the content agent.
         await chrome.tabs.sendMessage(chatTab.id, { type: "FIND_SHIPMENT_IMAGE", waybill });
         sendResponse({ started: true, background: true });
       } catch (error) {
@@ -62,7 +73,10 @@ async function fetchImageDataUrl(rawUrl) {
   return "data:" + blob.type + ";base64," + btoa(binary);
 }
 
-function waitForTab(tabId) {
+async function waitForTab(tabId) {
+  const existing = await chrome.tabs.get(tabId);
+  if (existing.status === "complete") return;
+
   return new Promise((resolve, reject) => {
     const timeout = setTimeout(() => {
       chrome.tabs.onUpdated.removeListener(listener);
