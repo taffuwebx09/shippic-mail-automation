@@ -1,8 +1,7 @@
 /*
- * SHIP PIC3 lookup running in the inactive Google Chat tab.
- * A search result is accepted only when its row contains BOTH the exact waybill
- * and the configured SHIP PIC3 group name. It then opens that row and transfers
- * the corresponding photo to the ShipPic website.
+ * ShipPic background Google Chat agent.
+ * Pairing rule: the requested waybill message is followed by its photo in the
+ * SHIP PIC3 timeline. The photo may be posted by a different sender.
  */
 const GROUP_NAME = "SHIP PIC3";
 const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
@@ -17,35 +16,42 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
 });
 
 async function findShipmentImage(waybill) {
-  waybill = String(waybill || "").trim();
+  waybill = String(waybill || "").trim().replace(/^'+/, "");
   if (!/^\d{8,25}$/.test(waybill)) throw new Error("Waybill format is invalid.");
 
-  await sleep(900);
-  const searchBox = findSearchBox();
-  if (!searchBox) throw new Error("Google Chat search field was not detected. Open Google Chat and keep your session signed in.");
+  const searchBox = await waitForSearchBox();
+  if (!searchBox) throw new Error("Google Chat search field was not detected. Keep Google Chat signed in and reload the extension.");
 
   setInput(searchBox, waybill);
-  await sleep(200);
+  await sleep(250);
   pressEnter(searchBox);
 
-  // Important: only click a result row that names the target SHIP PIC3 group.
   const resultRow = await waitForTargetGroupResult(waybill);
   if (!resultRow) {
-    throw new Error("Google Chat search completed, but I couldn't find a result row containing both this waybill and SHIP PIC3. The result may be hidden by a filter or Chat's DOM may have changed.");
+    throw new Error("Google Chat search returned no exact result in SHIP PIC3. Check the waybill and make sure the SHIP PIC3 conversation is included in search.");
   }
 
   clickResult(resultRow);
 
-  // Wait for the selected conversation to render the actual message and its image.
   const messageAndImage = await waitForMessagePhoto(waybill);
   if (!messageAndImage) {
-    throw new Error("The SHIP PIC3 result was opened, but the exact waybill's photo wasn't found in the conversation.");
+    throw new Error("Opened SHIP PIC3, but no photo was found below the exact waybill. The message may not have an image yet, or Chat did not load the nearby messages.");
   }
 
+  const imageDataUrl = await fetchImageThroughExtension(messageAndImage.image.currentSrc || messageAndImage.image.src);
   return {
-    imageDataUrl: await imageToDataUrl(messageAndImage.image.currentSrc || messageAndImage.image.src),
-    message: "Photo fetched from the matching waybill in SHIP PIC3."
+    imageDataUrl,
+    message: "Shipment photo matched by timeline order in SHIP PIC3, regardless of sender."
   };
+}
+
+async function waitForSearchBox() {
+  for (let i = 0; i < 40; i++) {
+    const box = findSearchBox();
+    if (box) return box;
+    await sleep(250);
+  }
+  return null;
 }
 
 function findSearchBox() {
@@ -75,21 +81,26 @@ function setInput(el, value) {
 
 function pressEnter(el) {
   for (const type of ["keydown", "keypress", "keyup"]) {
-    el.dispatchEvent(new KeyboardEvent(type, { key: "Enter", code: "Enter", keyCode: 13, which: 13, bubbles: true }));
+    el.dispatchEvent(new KeyboardEvent(type, { key: "Enter", code: "Enter", keyCode: 13, which: 13, bubbles: true, cancelable: true }));
   }
 }
 
-function normalizeText(value) {
+function normalized(value) {
   return String(value || "").replace(/\s+/g, " ").trim().toUpperCase();
 }
 
-function hasWaybillAndTargetGroup(element, waybill) {
-  const text = normalizeText(element.innerText || element.textContent);
-  return text.includes(waybill) && text.includes(normalizeText(GROUP_NAME));
+function containsExactWaybill(el, waybill) {
+  const text = normalized(el.innerText || el.textContent);
+  return text.split(/\D+/).includes(waybill);
+}
+
+function hasTargetGroupAndWaybill(el, waybill) {
+  const text = normalized(el.innerText || el.textContent);
+  return text.includes(normalized(GROUP_NAME)) && containsExactWaybill(el, waybill);
 }
 
 async function waitForTargetGroupResult(waybill) {
-  for (let attempt = 0; attempt < 50; attempt++) {
+  for (let attempt = 0; attempt < 60; attempt++) {
     const row = findTargetGroupResult(waybill);
     if (row) return row;
     await sleep(250);
@@ -98,84 +109,86 @@ async function waitForTargetGroupResult(waybill) {
 }
 
 function findTargetGroupResult(waybill) {
-  const leaves = Array.from(document.querySelectorAll("body *"))
-    .filter((el) => el.children.length <= 2 && normalizeText(el.textContent).includes(waybill) && visible(el));
+  const numberLeaves = Array.from(document.querySelectorAll("body *"))
+    .filter((el) => el.children.length <= 2 && containsExactWaybill(el, waybill) && visible(el));
 
   const candidates = new Set();
-  for (const leaf of leaves) {
-    let current = leaf;
-    for (let depth = 0; depth < 10 && current && current !== document.body; depth++, current = current.parentElement) {
-      if (!visible(current)) continue;
-      const rect = current.getBoundingClientRect();
-      // A result card/row should be bounded. Exclude the whole results page.
-      if (rect.height >= 38 && rect.height <= 520 && rect.width >= 180 && rect.width <= window.innerWidth * 0.98 &&
-          hasWaybillAndTargetGroup(current, waybill)) {
-        candidates.add(current);
+  for (const leaf of numberLeaves) {
+    let el = leaf;
+    for (let depth = 0; depth < 14 && el && el !== document.body; depth++, el = el.parentElement) {
+      if (!visible(el) || !hasTargetGroupAndWaybill(el, waybill)) continue;
+      const rect = el.getBoundingClientRect();
+      // Avoid treating the full search-results page as the selectable result.
+      if (rect.width >= 170 && rect.width <= window.innerWidth * 0.99 && rect.height >= 32 && rect.height <= 650) {
+        candidates.add(el);
       }
     }
   }
 
-  return Array.from(candidates)
-    .map((el) => ({ el, rect: el.getBoundingClientRect(), textLength: normalizeText(el.innerText || el.textContent).length }))
-    // Favor the smallest container that still contains the group label and exact waybill.
-    .sort((a, b) => (a.rect.height * a.rect.width) - (b.rect.height * b.rect.width) || a.textLength - b.textLength)[0]?.el || null;
+  const ranked = Array.from(candidates).map((el) => {
+    const r = el.getBoundingClientRect();
+    const role = el.getAttribute("role") || "";
+    const semanticClick = /^(listitem|button|link|option)$/i.test(role) || el.hasAttribute("tabindex");
+    return { el, area: r.width * r.height, semanticClick, textLength: normalized(el.innerText || el.textContent).length };
+  }).sort((a, b) => Number(b.semanticClick) - Number(a.semanticClick) || a.area - b.area || a.textLength - b.textLength);
+
+  return ranked[0]?.el || null;
 }
 
 function clickResult(el) {
   el.scrollIntoView({ block: "center", inline: "nearest" });
-  // Google Chat commonly handles clicks through delegated events on the result row.
-  el.dispatchEvent(new MouseEvent("mousedown", { bubbles: true, cancelable: true, view: window }));
-  el.dispatchEvent(new MouseEvent("mouseup", { bubbles: true, cancelable: true, view: window }));
-  el.click();
+  const r = el.getBoundingClientRect();
+  const x = r.left + r.width / 2;
+  const y = r.top + r.height / 2;
+  for (const type of ["mousedown", "mouseup", "click"]) {
+    el.dispatchEvent(new MouseEvent(type, { bubbles: true, cancelable: true, view: window, clientX: x, clientY: y, button: 0 }));
+  }
 }
 
 async function waitForMessagePhoto(waybill) {
-  for (let attempt = 0; attempt < 55; attempt++) {
-    const exactNodes = findExactWaybillNodes(waybill);
-    for (const messageNode of exactNodes) {
-      const image = findImageBelowMessage(messageNode);
-      if (image) return { messageNode, image };
+  for (let attempt = 0; attempt < 70; attempt++) {
+    const groupTitleVisible = normalized(document.body.innerText).includes(normalized(GROUP_NAME));
+    if (groupTitleVisible) {
+      const nodes = findExactWaybillNodes(waybill);
+      for (const node of nodes) {
+        node.scrollIntoView({ block: "center", inline: "nearest" });
+        await sleep(120);
+        const image = findPhotoFollowingWaybill(node, waybill);
+        if (image) return { messageNode: node, image };
+      }
     }
-    await sleep(300);
+    await sleep(250);
   }
   return null;
 }
 
 function findExactWaybillNodes(waybill) {
   return Array.from(document.querySelectorAll("body *"))
-    .filter((el) => el.children.length <= 2 && (el.innerText || el.textContent || "").trim() === waybill && visible(el))
+    .filter((el) => el.children.length <= 2 && normalized(el.innerText || el.textContent) === waybill && visible(el))
     .sort((a, b) => a.getBoundingClientRect().top - b.getBoundingClientRect().top);
 }
 
-function findImageBelowMessage(textNode) {
-  const textRect = textNode.getBoundingClientRect();
+function findPhotoFollowingWaybill(waybillNode, waybill) {
+  const numberRect = waybillNode.getBoundingClientRect();
+  const photos = getVisibleShipmentPhotos(document).map((img) => {
+    const rect = img.getBoundingClientRect();
+    return { img, top: rect.top, gap: rect.top - numberRect.bottom, left: rect.left };
+  }).filter((photo) => photo.gap >= -24 && photo.gap <= 1600);
 
-  // Try compact ancestors first. This keeps the photo association local to this message.
-  let root = textNode;
-  for (let depth = 0; depth < 8 && root.parentElement; depth++) {
-    root = root.parentElement;
-    const images = getShipmentImages(root);
-    const below = images
-      .map((img) => ({ img, gap: img.getBoundingClientRect().top - textRect.bottom }))
-      .filter(({ gap }) => gap >= -18 && gap <= 1250)
-      .sort((a, b) => a.gap - b.gap)[0];
-    if (below) return below.img;
-    if (root.getBoundingClientRect().height > 1700) break;
-  }
+  // A different waybill between this number and a photo means that photo belongs
+  // to the later shipment. Sender identity is intentionally not considered.
+  const nextWaybillTop = Array.from(document.querySelectorAll("body *"))
+    .filter((el) => el.children.length <= 2 && visible(el))
+    .map((el) => ({ text: normalized(el.innerText || el.textContent), top: el.getBoundingClientRect().top }))
+    .filter((item) => /^\d{8,25}$/.test(item.text) && item.text !== waybill && item.top > numberRect.bottom + 2)
+    .reduce((min, item) => Math.min(min, item.top), Infinity);
 
-  // Fallback by geometry inside the conversation viewport.
-  return getShipmentImages(document)
-    .map((img) => {
-      const rect = img.getBoundingClientRect();
-      const gap = rect.top - textRect.bottom;
-      const horizontal = Math.abs(rect.left - textRect.left);
-      return { img, gap, horizontal, score: gap + horizontal * 0.12 };
-    })
-    .filter(({ gap, horizontal }) => gap >= -18 && gap <= 1250 && horizontal < Math.max(520, window.innerWidth * 0.45))
-    .sort((a, b) => a.score - b.score)[0]?.img || null;
+  return photos
+    .filter((photo) => photo.top < nextWaybillTop)
+    .sort((a, b) => a.gap - b.gap)[0]?.img || null;
 }
 
-function getShipmentImages(root) {
+function getVisibleShipmentPhotos(root) {
   return Array.from(root.querySelectorAll("img"))
     .filter((img) => visible(img) && img.complete && img.naturalWidth > 80 && img.naturalHeight > 80)
     .filter((img) => !/avatar|profile|emoji|logo/i.test((img.alt || "") + " " + (img.getAttribute("aria-label") || "")));
@@ -187,17 +200,20 @@ function visible(el) {
   return rect.width > 0 && rect.height > 0 && style.visibility !== "hidden" && style.display !== "none";
 }
 
-async function imageToDataUrl(url) {
-  if (!url) throw new Error("The matching photo's image source is missing.");
-  const response = await fetch(url, { credentials: "include" });
-  if (!response.ok) throw new Error("Google Chat image retrieval failed (" + response.status + ").");
-  const blob = await response.blob();
-  if (!blob.type.startsWith("image/")) throw new Error("The matched attachment is not an image.");
-  if (blob.size > 12 * 1024 * 1024) throw new Error("The shipment image is larger than 12 MB.");
+function fetchImageThroughExtension(url) {
   return new Promise((resolve, reject) => {
-    const reader = new FileReader();
-    reader.onload = () => resolve(reader.result);
-    reader.onerror = () => reject(new Error("Could not convert the shipment photo for the website."));
-    reader.readAsDataURL(blob);
+    if (!url || !/^https:\/\//i.test(url)) {
+      reject(new Error("The matching photo has no supported HTTPS image URL."));
+      return;
+    }
+    chrome.runtime.sendMessage({ type: "FETCH_SHIPPIC_IMAGE", url }, (response) => {
+      if (chrome.runtime.lastError) {
+        reject(new Error("The extension could not retrieve the Google Chat photo: " + chrome.runtime.lastError.message));
+      } else if (!response?.imageDataUrl) {
+        reject(new Error(response?.error || "Google Chat photo transfer failed."));
+      } else {
+        resolve(response.imageDataUrl);
+      }
+    });
   });
 }
