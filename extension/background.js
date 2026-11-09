@@ -104,7 +104,6 @@ async function listAllMessages(token, spaceName) {
   do {
     const data = await chatApi(token, spaceName + "/messages", {
       pageSize: "1000",
-      orderBy: "ASC",
       pageToken
     });
     all.push(...(data.messages || []));
