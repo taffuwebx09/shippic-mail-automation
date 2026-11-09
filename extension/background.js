@@ -10,15 +10,14 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
 
     (async () => {
       try {
-        const matchingTabs = await chrome.tabs.query({ url: "https://chat.google.com/app/chat/*" });
-        let chatTab = matchingTabs.find((tab) => (tab.url || "").includes("AAAA88R6rOc"));
+        const chatTabs = await chrome.tabs.query({ url: "https://chat.google.com/app/chat/*" });
+        let chatTab = chatTabs.find((tab) => (tab.url || "").includes("AAAA88R6rOc"));
         if (!chatTab) {
           chatTab = await chrome.tabs.create({ url: CHAT_GROUP_URL, active: true });
           await waitForTab(chatTab.id);
         } else {
           await chrome.tabs.update(chatTab.id, { active: true });
         }
-
         await chrome.tabs.sendMessage(chatTab.id, { type: "FIND_SHIPMENT_IMAGE", waybill });
         sendResponse({ started: true });
       } catch (error) {
@@ -29,11 +28,8 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
   }
 
   if (message?.type === "SHIP_PIC_RESULT" || message?.type === "SHIP_PIC_ERROR") {
-    // Send result to every open ShipPic app tab; the page displays the image in its active workspace.
     chrome.tabs.query({ url: "https://shippic-mail-automation.vercel.app/*" }).then((tabs) => {
-      for (const tab of tabs) {
-        if (tab.id) chrome.tabs.sendMessage(tab.id, message).catch(() => {});
-      }
+      for (const tab of tabs) if (tab.id) chrome.tabs.sendMessage(tab.id, message).catch(() => {});
     });
   }
 });
