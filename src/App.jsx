@@ -9,6 +9,7 @@ export default function App() {
   const [image, setImage] = useState(null);
   const [busy, setBusy] = useState(false);
   const [connected, setConnected] = useState(false);
+  const [extensionVersion, setExtensionVersion] = useState("");
   const [notice, setNotice] = useState({ kind: "info", text: "Enter a waybill number. Install the companion extension to search your private Google Chat group." });
   const inputRef = useRef(null);
 
@@ -16,7 +17,10 @@ export default function App() {
     const onMessage = (event) => {
       if (event.source !== window || event.origin !== window.location.origin || event.data?.source !== "shippic-extension") return;
       const d = event.data;
-      if (d.type === "EXTENSION_READY") setConnected(true);
+      if (d.type === "EXTENSION_READY") {
+        setConnected(true);
+        setExtensionVersion(d.extensionVersion || "unknown");
+      }
       if (d.type === "SEARCH_STARTED") {
         setBusy(true);
         setNotice({ kind: "info", text: "Searching SHIP PIC3 in the background…" });
@@ -38,7 +42,7 @@ export default function App() {
     window.addEventListener("message", onMessage);
     window.postMessage({ source: "shippic-web", type: "PING_EXTENSION" }, window.location.origin);
     return () => window.removeEventListener("message", onMessage);
-  }, [waybill]);
+  }, []);
 
   const searchShipment = () => {
     const number = waybill.trim().replace(/^'+/, "");
@@ -56,7 +60,7 @@ export default function App() {
   return <div className="app-shell lookup-app">
     <header className="topbar">
       <a className="brand" href="/"><span className="brand-mark"><Package size={20}/></span><span className="brand-copy"><b>ShipPic</b><small>MAIL AUTOMATION</small></span></a>
-      <div className="topbar-meta"><span className="secure"><ShieldCheck size={15}/> Private browser workflow</span><span className={`extension-pill ${connected ? "ready" : ""}`}><i/>{connected ? "EXTENSION CONNECTED" : "EXTENSION NEEDED"}</span></div>
+      <div className="topbar-meta"><span className="secure"><ShieldCheck size={15}/> Private browser workflow</span><span className={`extension-pill ${connected ? "ready" : ""}`}><i/>{connected ? `EXTENSION CONNECTED · v${extensionVersion}` : "EXTENSION NEEDED"}</span></div>
     </header>
     <main>
       <section className="hero"><div className="eyebrow"><i/> SHIPMENT EVIDENCE WORKSPACE</div><h1>Find the photo.<br/><span>Build the email.</span></h1><p>Enter a waybill and ShipPic will search SHIP PIC3 in the background, then bring the matching shipment photo here.</p></section>
