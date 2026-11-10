@@ -85,6 +85,7 @@ test("finds an image in a later message that repeats the same waybill", async ()
   assert.equal(urls.length, 1);
   assert.equal(urls[0].searchParams.has("orderBy"), false);
   assert.equal(urls[0].searchParams.get("filter"), 'createTime > "2026-11-10T01:00:00Z"');
+  assert.equal(urls[0].searchParams.get("pageSize"), "25");
 });
 
 test("stops before a different waybill, even if that message has an image", async () => {
@@ -162,6 +163,7 @@ test("runs the complete lookup and returns the downloaded Chat photo", async () 
   assert.equal(result.imageDataUrl, "data:image/jpeg;base64,CQgH");
   assert.equal(requests.some((r) => r.url.searchParams.has("orderBy")), false);
   assert.ok(requests.some((r) => r.url.pathname === "/v1/spaces/-/messages:search"));
+  assert.equal(requests.some((r) => r.url.pathname.endsWith("/messages/waybill-1")), false, "full search result must avoid a redundant message GET");
   assert.ok(requests.some((r) => r.url.pathname === "/v1/media/spaces/ship-pic3/messages/photo/attachments/abc"));
 });
 
