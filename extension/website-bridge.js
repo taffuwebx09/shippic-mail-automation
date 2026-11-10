@@ -16,7 +16,7 @@ window.addEventListener("message", (event) => {
       chatUrl: "https://chat.google.com/app/chat/AAAA88R6rOc"
     }, (response) => {
       if (chrome.runtime.lastError) {
-        window.postMessage({ source: "shippic-extension", type: "SEARCH_ERROR", message: "Extension isn't responding. Check that it's enabled, then reload this page." }, window.location.origin);
+        window.postMessage({ source: "shippic-extension", type: "SEARCH_ERROR", message: "Extension connection failed: " + chrome.runtime.lastError.message + ". Reload this website tab after reloading the extension." }, window.location.origin);
       } else if (response?.result?.imageDataUrl) {
         window.postMessage({
           source: "shippic-extension",
@@ -27,6 +27,8 @@ window.addEventListener("message", (event) => {
         }, window.location.origin);
       } else if (response?.error) {
         window.postMessage({ source: "shippic-extension", type: "SEARCH_ERROR", message: response.error }, window.location.origin);
+      } else {
+        window.postMessage({ source: "shippic-extension", type: "SEARCH_ERROR", message: "The extension returned an empty response. Inspect the ShipPic service worker in chrome://extensions, then reload this website tab." }, window.location.origin);
       }
     });
   }
