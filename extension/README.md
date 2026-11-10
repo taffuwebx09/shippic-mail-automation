@@ -24,4 +24,4 @@ Enable Google Chat API in the Cloud project. For photos attached as Google Drive
 
 ## Performance
 
-The extension caches the SHIP PIC3 space resource name in Chrome local extension storage after the first successful lookup, reuses full search results, and requests following messages in 100-message pages. Search time still depends on Google Chat response latency and photo download size.
+The extension caches the SHIP PIC3 space resource name in Chrome local extension storage after the first successful lookup, reuses full search results, and requests following messages in 25-message pages. Search time still depends on Google Chat response latency and photo download size.
