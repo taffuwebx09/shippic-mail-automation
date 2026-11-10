@@ -166,7 +166,7 @@ test("runs the complete lookup and returns the downloaded Chat photo", async () 
   assert.equal(requests.some((r) => r.url.searchParams.has("orderBy")), false);
   assert.ok(requests.some((r) => r.url.pathname === "/v1/spaces/-/messages:search"));
   assert.equal(requests.some((r) => r.url.pathname.endsWith("/messages/waybill-1")), false, "full search result must avoid a redundant message GET");
-  assert.ok(requests.some((r) => r.url.pathname === "/v1/media/spaces/ship-pic3/messages/photo/attachments/abc"));
+  assert.ok(requests.some((r) => r.url.pathname === "/v1/media/spaces/ship-pic3/messages/photo-1/attachments/abc"));
 });
 
 test("stops when a message contains the target and a different waybill", async () => {
@@ -228,4 +228,41 @@ test("collects two photos across adjacent messages and stops at a different wayb
 test("keeps the existing singular image helper backward-compatible", () => {
   const api = loadBackground();
   assert.equal(api.imageAttachment({ attachment: [uploadedImage] }).name, uploadedImage.name);
+});
+
+test("full lookup downloads and returns only two photos when the waybill message has four", async () => {
+  const requests = [];
+  const four = [1, 2, 3, 4].map((n) => ({
+    ...uploadedImage,
+    name: "attachment-" + n,
+    contentName: "shipment-" + n + ".jpg",
+    attachmentDataRef: { resourceName: "spaces/ship-pic3/messages/waybill-1/attachments/" + n }
+  }));
+  const api = loadBackground(async (input) => {
+    const url = new URL(input);
+    requests.push(url);
+    if (url.pathname === "/v1/spaces") {
+      return { ok: true, json: async () => ({ spaces: [{ name: "spaces/ship-pic3", displayName: "SHIP PIC3" }] }) };
+    }
+    if (url.pathname === "/v1/spaces/-/messages:search") {
+      return { ok: true, json: async () => ({ results: [{
+        message: {
+          name: "spaces/ship-pic3/messages/waybill-1",
+          createTime: "2026-11-10T01:00:00Z",
+          text: targetWaybill,
+          attachment: four
+        }
+      }] }) };
+    }
+    if (url.pathname.startsWith("/v1/media/")) {
+      return { ok: true, blob: async () => new Blob([new Uint8Array([1, 2, 3])], { type: "image/jpeg" }) };
+    }
+    throw new Error("Unexpected request: " + url.pathname);
+  });
+
+  const result = await api.lookupShipmentPhoto(targetWaybill);
+  assert.equal(result.imageDataUrls.length, 2);
+  assert.equal(result.imageDataUrl, result.imageDataUrls[0]);
+  assert.equal(requests.filter((url) => url.pathname.startsWith("/v1/media/")).length, 2);
+  assert.equal(requests.some((url) => url.pathname.endsWith("/messages")), false);
 });
