@@ -11,7 +11,8 @@ function loadBackground(fetchImpl = async () => { throw new Error("Unexpected fe
   const context = {
     chrome: {
       runtime: { onMessage: { addListener() {} }, lastError: null },
-      identity: { getAuthToken: (_options, callback) => callback("test-token") }
+      identity: { getAuthToken: (_options, callback) => callback("test-token") },
+      storage: { local: { get: (_keys, callback) => callback({}), set: (_values, callback) => callback?.() } }
     },
     URL,
     Blob,
@@ -28,7 +29,8 @@ function loadBackground(fetchImpl = async () => { throw new Error("Unexpected fe
       hasDifferentWaybill,
       blobToDataUrl,
       downloadMessageImage,
-      lookupShipmentPhoto
+      lookupShipmentPhoto,
+      findTargetSpace
     };
   `, context);
   return context.__test;
@@ -166,4 +168,25 @@ test("runs the complete lookup and returns the downloaded Chat photo", async () 
 test("stops when a message contains the target and a different waybill", async () => {
   const api = loadBackground();
   assert.equal(api.hasDifferentWaybill({ text: targetWaybill + " and 98765432101234" }, targetWaybill), true);
+});
+
+
+test("space lookup uses a cached SHIP PIC3 resource without another API request", async () => {
+  let calls = 0;
+  const context = {
+    chrome: {
+      runtime: { onMessage: { addListener() {} }, lastError: null },
+      storage: { local: { get: (_keys, callback) => callback({ shippicTargetSpaceName: "spaces/cached-space" }) } }
+    },
+    URL,
+    fetch: async () => { calls++; throw new Error("Should not call API when cache exists"); },
+    Blob, Uint8Array, btoa
+  };
+  vm.createContext(context);
+  vm.runInContext(source + `
+    globalThis.__cachedSpaceTest = findTargetSpace;
+  `, context);
+  const cached = await context.__cachedSpaceTest("test-token");
+  assert.equal(cached.name, "spaces/cached-space");
+  assert.equal(calls, 0);
 });
