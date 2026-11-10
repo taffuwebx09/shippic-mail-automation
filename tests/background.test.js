@@ -25,6 +25,7 @@ function loadBackground(fetchImpl = async () => { throw new Error("Unexpected fe
       imageAttachment,
       containsWaybill,
       findFollowingImageInSpace,
+      hasDifferentWaybill,
       blobToDataUrl,
       downloadMessageImage,
       lookupShipmentPhoto
@@ -160,4 +161,9 @@ test("runs the complete lookup and returns the downloaded Chat photo", async () 
   assert.equal(requests.some((r) => r.url.searchParams.has("orderBy")), false);
   assert.ok(requests.some((r) => r.url.pathname === "/v1/spaces/-/messages:search"));
   assert.ok(requests.some((r) => r.url.pathname === "/v1/media/spaces/ship-pic3/messages/photo/attachments/abc"));
+});
+
+test("stops when a message contains the target and a different waybill", async () => {
+  const api = loadBackground();
+  assert.equal(api.hasDifferentWaybill({ text: targetWaybill + " and 98765432101234" }, targetWaybill), true);
 });
