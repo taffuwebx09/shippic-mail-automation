@@ -41,3 +41,7 @@ Enable the Google Chat API and, for Drive-backed attachments, the Google Drive A
 ## Fast lookup behavior
 
 After the first successful lookup, the extension caches the SHIP PIC3 space resource name locally. Searches reuse the cached space to avoid re-listing all spaces. Google Chat's full search result is reused without an extra message-get request, and following messages are fetched in small pages (25) so nearby photo attachments can be found quickly. Actual response time depends on Google, office network latency, and image size.
+
+## Shipment photo preview
+
+ShipPic collects up to two downloadable image attachments for the first valid waybill timeline match. If the waybill message has multiple photos, the first two are displayed; if there are more than two, the rest are ignored. If the photo is in a following message, ShipPic continues in timeline order but stops at the next different waybill. Existing single-image responses remain compatible.
