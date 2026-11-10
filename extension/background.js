@@ -221,7 +221,7 @@ function imageAttachment(message) {
     const contentType = String(item.contentType || "").toLowerCase();
     const fileName = String(item.contentName || "").toLowerCase();
     const looksLikeImage = contentType.startsWith("image/") ||
-      /\\.(jpe?g|png|gif|webp|bmp|heic|heif)$/i.test(fileName);
+      /\.(jpe?g|png|gif|webp|bmp|heic|heif)$/i.test(fileName);
 
     // Only accept attachments that have a supported downloadable data ref.
     return looksLikeImage && Boolean(
