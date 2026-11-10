@@ -23,6 +23,7 @@ window.addEventListener("message", (event) => {
           source: "shippic-extension",
           type: "SEARCH_RESULT",
           waybill: data.waybill,
+          imageDataUrls: response.result.imageDataUrls || (response.result.imageDataUrl ? [response.result.imageDataUrl] : []),
           imageDataUrl: response.result.imageDataUrl,
           message: response.result.message,
           durationMs: response.result.durationMs
@@ -45,7 +46,7 @@ window.addEventListener("message", (event) => {
 
 chrome.runtime.onMessage.addListener((message) => {
   if (message?.type === "SHIP_PIC_RESULT") {
-    window.postMessage({ source: "shippic-extension", type: "SEARCH_RESULT", waybill: message.waybill, imageDataUrl: message.imageDataUrl, message: message.message }, window.location.origin);
+    window.postMessage({ source: "shippic-extension", type: "SEARCH_RESULT", waybill: message.waybill, imageDataUrls: message.imageDataUrls || (message.imageDataUrl ? [message.imageDataUrl] : []), imageDataUrl: message.imageDataUrl, message: message.message }, window.location.origin);
   } else if (message?.type === "SHIP_PIC_ERROR") {
     window.postMessage({ source: "shippic-extension", type: "SEARCH_ERROR", message: message.message }, window.location.origin);
   }
