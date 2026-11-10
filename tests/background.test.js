@@ -24,6 +24,8 @@ function loadBackground(fetchImpl = async () => { throw new Error("Unexpected fe
   vm.runInContext(source + `
     globalThis.__test = {
       imageAttachment,
+      imageAttachments,
+      findFollowingImagesInSpace,
       containsWaybill,
       findFollowingImageInSpace,
       hasDifferentWaybill,
@@ -191,4 +193,36 @@ test("space lookup uses a cached SHIP PIC3 resource without another API request"
   const cached = await context.__cachedSpaceTest("test-token");
   assert.equal(cached.name, "spaces/cached-space");
   assert.equal(calls, 0);
+});
+
+
+test("collects at most two photos when one Chat message has four image attachments", async () => {
+  const api = loadBackground();
+  const four = [1,2,3,4].map((n) => ({
+    ...uploadedImage,
+    name: "attachment-" + n,
+    contentName: "shipment-" + n + ".jpg",
+    attachmentDataRef: { resourceName: "spaces/ship-pic3/messages/photo/attachments/" + n }
+  }));
+  const images = api.imageAttachments({ attachment: four });
+  assert.equal(images.length, 4);
+  assert.deepEqual(images.slice(0, 2).map((item) => item.name), ["attachment-1", "attachment-2"]);
+});
+
+test("collects two photos across adjacent messages and stops at a different waybill", async () => {
+  const api = loadBackground(async () => ({ ok: true, json: async () => ({ messages: [
+    { name: "photo-one", text: "", attachment: [{ ...uploadedImage, name: "one",
+      attachmentDataRef: { resourceName: "spaces/s/messages/m/attachments/one" } }] },
+    { name: "photo-two", text: "", attachment: [{ ...uploadedImage, name: "two",
+      attachmentDataRef: { resourceName: "spaces/s/messages/m/attachments/two" } }] },
+    { name: "next-awb", text: "98765432101234", attachment: [{ ...uploadedImage, name: "three" }] }
+  ] }) }));
+  const found = await api.findFollowingImagesInSpace("token", "spaces/s",
+    { name: "awb", createTime: "2026-11-10T01:00:00Z" }, targetWaybill);
+  assert.deepEqual(found.map((item) => item.name), ["one", "two"]);
+});
+
+test("keeps the existing singular image helper backward-compatible", () => {
+  const api = loadBackground();
+  assert.equal(api.imageAttachment({ attachment: [uploadedImage] }).name, uploadedImage.name);
 });
