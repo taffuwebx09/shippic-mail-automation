@@ -45,3 +45,8 @@ After the first successful lookup, the extension caches the SHIP PIC3 space reso
 ## Shipment photo preview
 
 ShipPic collects up to two downloadable image attachments for the first valid waybill timeline match. If the waybill message has multiple photos, the first two are displayed; if there are more than two, the rest are ignored. If the photo is in a following message, ShipPic continues in timeline order but stops at the next different waybill. Existing single-image responses remain compatible.
+
+
+## Multi-image shipment preview
+
+For each waybill, the website displays up to two matching shipment photos. Additional images are ignored, and matching stops at the next different waybill.
