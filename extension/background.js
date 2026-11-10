@@ -43,12 +43,7 @@ async function lookupShipmentPhoto(waybill) {
       return { imageDataUrl: photo, waybill, message: "Shipment photo retrieved from the waybill message in SHIP PIC3." };
     }
 
-    const following = await listMessagesAfterOccurrence(token, space.name, occurrence.createTime);
-    // The inclusive timestamp filter can return the original message again.
-    // Remove it so it cannot be mistaken for the next waybill boundary.
-    const nextMessages = following.filter((message) => message.name !== occurrence.name);
-    const timeline = [occurrence, ...nextMessages].sort((a, b) => new Date(a.createTime || 0) - new Date(b.createTime || 0));
-    const candidate = findFollowingImage(timeline, waybill);
+    const candidate = await findFollowingImageInSpace(token, space.name, occurrence, waybill);
     if (candidate) {
       const photo = await downloadMessageImage(token, candidate);
       return { imageDataUrl: photo, waybill, message: "Shipment photo retrieved from the first valid SHIP PIC3 timeline match." };
@@ -94,35 +89,30 @@ async function searchWaybillMessages(token, waybill, spaceName) {
   return results;
 }
 
-async function listMessagesAfterOccurrence(token, spaceName, createTime) {
-  if (!createTime) throw new Error("Google Chat returned a waybill message without a creation timestamp.");
-  const start = new Date(createTime);
-  const end = new Date(start.getTime() + 10 * 60 * 1000);
-  const filter = 'createTime > "' + start.toISOString() + '" AND createTime < "' + end.toISOString() + '"';
-  const all = [];
+async function findFollowingImageInSpace(token, spaceName, occurrence, waybill) {
+  if (!occurrence.createTime) throw new Error("Google Chat returned a waybill message without a creation timestamp.");
+
+  // Do not impose an arbitrary 10-minute cutoff. Walk forward in chronological
+  // pages until the next waybill boundary or the first image attachment.
   let pageToken = "";
   do {
     const data = await chatApi(token, spaceName + "/messages", {
       pageSize: "1000",
-      filter,
-      orderBy: "createTime ASC",
+      filter: 'createTime > "' + new Date(occurrence.createTime).toISOString() + '"',
+      orderBy: "ASC",
       pageToken
     });
-    all.push(...(data.messages || []));
-    if (all.length >= 2000) break;
+
+    for (const message of (data.messages || [])) {
+      if (message.name === occurrence.name) continue;
+      if (hasAnyWaybill(message)) return null;
+
+      const attachment = imageAttachment(message);
+      if (attachment) return attachment;
+    }
     pageToken = data.nextPageToken || "";
   } while (pageToken);
-  return all;
-}
 
-function findFollowingImage(timeline, waybill) {
-  const occurrenceIndex = timeline.findIndex((message) => containsWaybill(message, waybill));
-  if (occurrenceIndex < 0) return null;
-  for (let i = occurrenceIndex + 1; i < timeline.length; i++) {
-    if (hasAnyWaybill(timeline[i])) break;
-    const attachment = imageAttachment(timeline[i]);
-    if (attachment) return attachment;
-  }
   return null;
 }
 
@@ -203,11 +193,17 @@ function imageAttachment(message) {
   const attachments = Array.isArray(message.attachments) ? message.attachments : [];
   return attachments.find((item) =>
     String(item.contentType || "").toLowerCase().startsWith("image/") &&
-    item.attachmentDataRef?.resourceName
+    (item.attachmentDataRef?.resourceName || item.driveDataRef?.resourceName || item.name)
   );
 }
 
 async function downloadMessageImage(token, attachment) {
+  if (!attachment.attachmentDataRef?.resourceName) {
+    if (attachment.driveDataRef?.resourceName || attachment.source === "DRIVE_FILE") {
+      throw new Error("The matching photo is a Google Drive attachment, not an uploaded Chat image. Drive access is not enabled in this extension yet.");
+    }
+    throw new Error("The matching attachment does not expose a downloadable Chat media reference.");
+  }
   const resourceName = attachment.attachmentDataRef.resourceName;
   const url = "https://chat.googleapis.com/v1/media/" +
     resourceName.split("/").map(encodeURIComponent).join("/") + "?alt=media";
