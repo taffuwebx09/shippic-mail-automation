@@ -79,7 +79,7 @@ async function searchWaybillMessages(token, waybill, spaceName) {
       },
       body: JSON.stringify({
         filter: '"' + waybill + '" AND space.name = "' + spaceName + '"',
-        pageSize: 100,
+        pageSize: 25,
         view: "SEARCH_MESSAGES_VIEW_FULL",
         pageToken: pageToken || undefined
       })
@@ -111,7 +111,7 @@ async function findFollowingImageInSpace(token, spaceName, occurrence, waybill) 
   let scanned = 0;
   do {
     const data = await chatApi(token, spaceName + "/messages", {
-      pageSize: "100",
+      pageSize: "25",
       filter: 'createTime > "' + occurrence.createTime + '"',
       pageToken
     });
