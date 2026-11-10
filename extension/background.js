@@ -1,6 +1,5 @@
-const APP_URL = "https://shippic-mail-automation.vercel.app/";
 const TARGET_SPACE_NAME = "SHIP PIC3";
-const MAX_MESSAGES_TO_SCAN = 50000;
+const MAX_FOLLOWING_MESSAGES = 5000;
 const MAX_IMAGE_BYTES = 12 * 1024 * 1024;
 
 chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
@@ -95,6 +94,7 @@ async function findFollowingImageInSpace(token, spaceName, occurrence, waybill) 
   // Do not impose an arbitrary 10-minute cutoff. Walk forward in chronological
   // pages until the next waybill boundary or the first image attachment.
   let pageToken = "";
+  let scanned = 0;
   do {
     const data = await chatApi(token, spaceName + "/messages", {
       pageSize: "1000",
@@ -103,13 +103,22 @@ async function findFollowingImageInSpace(token, spaceName, occurrence, waybill) 
       pageToken
     });
 
-    for (const message of (data.messages || [])) {
+    const messages = data.messages || [];
+    scanned += messages.length;
+    if (scanned > MAX_FOLLOWING_MESSAGES) {
+      throw new Error("The waybill was found, but more than " + MAX_FOLLOWING_MESSAGES + " later messages appeared before a photo or next waybill. No potentially wrong photo was selected.");
+    }
+    for (const message of messages) {
       if (message.name === occurrence.name) continue;
       if (hasAnyWaybill(message)) return null;
 
       const attachment = imageAttachment(message);
       if (attachment) return attachment;
     }
+
+    if (!data.nextPageToken) return null;
+    // Avoid silently scanning an unbounded space when no next waybill is present.
+    if (messages.length === 0) return null;
     pageToken = data.nextPageToken || "";
   } while (pageToken);
 
@@ -191,46 +200,70 @@ function hasAnyWaybill(message) {
 
 function imageAttachment(message) {
   const attachments = Array.isArray(message.attachments) ? message.attachments : [];
-  return attachments.find((item) =>
-    String(item.contentType || "").toLowerCase().startsWith("image/") &&
-    (item.attachmentDataRef?.resourceName || item.driveDataRef?.resourceName || item.name)
-  );
+  return attachments.find((item) => {
+    const contentType = String(item.contentType || "").toLowerCase();
+    const fileName = String(item.contentName || "").toLowerCase();
+    const looksLikeImage = contentType.startsWith("image/") ||
+      /\\.(jpe?g|png|gif|webp|bmp|heic|heif)$/i.test(fileName);
+    return looksLikeImage && Boolean(
+      item.attachmentDataRef?.resourceName ||
+      item.driveDataRef?.driveFileId ||
+      item.name
+    );
+  });
 }
 
 async function downloadMessageImage(token, attachment) {
-  if (!attachment.attachmentDataRef?.resourceName) {
-    if (attachment.driveDataRef?.resourceName || attachment.source === "DRIVE_FILE") {
-      throw new Error("The matching photo is a Google Drive attachment, not an uploaded Chat image. Drive access is not enabled in this extension yet.");
-    }
-    throw new Error("The matching attachment does not expose a downloadable Chat media reference.");
+  let response;
+  const chatResourceName = attachment.attachmentDataRef?.resourceName;
+  const driveFileId = attachment.driveDataRef?.driveFileId;
+
+  if (chatResourceName) {
+    // Google Chat media.download accepts /v1/media/{+resourceName}?alt=media.
+    const encodedResourceName = chatResourceName.split("/").map(encodeURIComponent).join("/");
+    response = await fetch("https://chat.googleapis.com/v1/media/" + encodedResourceName + "?alt=media", {
+      headers: { Authorization: "Bearer " + token, Accept: "*/*" }
+    });
+  } else if (driveFileId) {
+    // Drive attachments are not downloadable through Chat media.download.
+    const driveUrl = new URL("https://www.googleapis.com/drive/v3/files/" + encodeURIComponent(driveFileId));
+    driveUrl.searchParams.set("alt", "media");
+    driveUrl.searchParams.set("supportsAllDrives", "true");
+    response = await fetch(driveUrl, {
+      headers: { Authorization: "Bearer " + token, Accept: "*/*" }
+    });
+  } else {
+    throw new Error("The image attachment has no downloadable Chat or Drive file reference. Attachment: " + (attachment.name || "unknown"));
   }
-  const resourceName = attachment.attachmentDataRef.resourceName;
-  const url = "https://chat.googleapis.com/v1/media/" +
-    resourceName.split("/").map(encodeURIComponent).join("/") + "?alt=media";
-  const response = await fetch(url, {
-    headers: { Authorization: "Bearer " + token }
-  });
+
   if (!response.ok) {
     const detail = await response.text().catch(() => "");
-    throw new Error("Google Chat found the matching image attachment but could not download it (" +
-      response.status + "). " + detail.slice(0, 300));
+    if (response.status === 401) throw new Error("Google authorization expired while downloading the photo. Reload the extension and authorize again.");
+    if (response.status === 403 && driveFileId) throw new Error("Google Drive denied access to the photo (403). Confirm the office account can open the file and that Google Drive API is enabled.");
+    throw new Error("Google could not download the matched image (" + response.status + "). " + detail.slice(0, 300));
   }
+
   const blob = await response.blob();
-  const contentType = blob.type || attachment.contentType || "";
+  const contentType = (blob.type && blob.type !== "application/octet-stream")
+    ? blob.type
+    : (attachment.contentType || "application/octet-stream");
+
   if (!contentType.toLowerCase().startsWith("image/")) {
-    throw new Error("The matched Chat attachment is not an image (" + contentType + ").");
+    throw new Error("The matched attachment is not an image (" + contentType + ").");
   }
+  if (!blob.size) throw new Error("Google returned an empty image file.");
   if (blob.size > MAX_IMAGE_BYTES) {
     throw new Error("Shipment photo exceeds the 12 MB website transfer limit.");
   }
   return blobToDataUrl(blob, contentType);
 }
 
-function blobToDataUrl(blob, contentType) {
-  return new Promise((resolve, reject) => {
-    const reader = new FileReader();
-    reader.onload = () => resolve(reader.result);
-    reader.onerror = () => reject(new Error("Could not convert the shipment image for the website."));
-    reader.readAsDataURL(new Blob([blob], { type: contentType }));
-  });
+async function blobToDataUrl(blob, contentType) {
+  const bytes = new Uint8Array(await blob.arrayBuffer());
+  const chunkSize = 0x8000;
+  let binary = "";
+  for (let offset = 0; offset < bytes.length; offset += chunkSize) {
+    binary += String.fromCharCode(...bytes.subarray(offset, offset + chunkSize));
+  }
+  return "data:" + contentType + ";base64," + btoa(binary);
 }
