@@ -22,24 +22,103 @@ async function lookupShipmentPhoto(waybill) {
   const token = await getOfficeAccountToken();
   const space = await findTargetSpace(token);
   if (!space) {
-    throw new Error('Google Chat API could not find the named space "SHIP PIC3" for the authorized account. Confirm the office account is the Chrome profile primary account and is a member of that space.');
+    throw new Error('Google Chat API could not find the named space "SHIP PIC3" for the authorized account. Confirm the office account is a member of that space.');
   }
 
-  const messages = await listAllMessages(token, space.name);
-  if (!messages.length) throw new Error("SHIP PIC3 is accessible, but it contains no readable messages.");
-
-  const targetIndex = findFirstValidOccurrence(messages, waybill);
-  if (!targetIndex) {
-    throw new Error("No valid photo match found for this waybill in SHIP PIC3. Checked the exact waybill occurrences and the following timeline messages.");
+  // Search the server-side Chat index for this exact waybill in SHIP PIC3.
+  // This avoids downloading/paginating the entire 50k+ message history.
+  const matches = await searchWaybillMessages(token, waybill, space.name);
+  if (!matches.length) {
+    throw new Error("No message containing this exact waybill was found in SHIP PIC3. Check the number and confirm it appears as message text.");
   }
 
-  const candidate = targetIndex;
-  const photo = await downloadMessageImage(token, candidate.attachment);
-  return {
-    imageDataUrl: photo,
-    waybill,
-    message: "Shipment photo retrieved from the first valid SHIP PIC3 timeline match."
-  };
+  // Search API returns newest first by default. Sort ascending to preserve
+  // the project's first-valid-occurrence rule.
+  matches.sort((a, b) => new Date(a.createTime || 0) - new Date(b.createTime || 0));
+
+  for (const occurrence of matches) {
+    const directImage = imageAttachment(occurrence);
+    if (directImage) {
+      const photo = await downloadMessageImage(token, directImage);
+      return { imageDataUrl: photo, waybill, message: "Shipment photo retrieved from the waybill message in SHIP PIC3." };
+    }
+
+    const following = await listMessagesAfterOccurrence(token, space.name, occurrence.createTime);
+    const timeline = [occurrence, ...following].sort((a, b) => new Date(a.createTime || 0) - new Date(b.createTime || 0));
+    const candidate = findFollowingImage(timeline, waybill);
+    if (candidate) {
+      const photo = await downloadMessageImage(token, candidate);
+      return { imageDataUrl: photo, waybill, message: "Shipment photo retrieved from the first valid SHIP PIC3 timeline match." };
+    }
+  }
+
+  throw new Error("Waybill was found in SHIP PIC3, but no image was found before the next waybill message. Check whether the photo is posted as a separate image attachment.");
+}
+
+async function searchWaybillMessages(token, waybill, spaceName) {
+  const results = [];
+  let pageToken = "";
+  do {
+    const response = await fetch("https://chat.googleapis.com/v1/spaces/-/messages:search", {
+      method: "POST",
+      headers: {
+        Authorization: "Bearer " + token,
+        "Content-Type": "application/json",
+        Accept: "application/json"
+      },
+      body: JSON.stringify({
+        filter: '"' + waybill + '" AND space.name = "' + spaceName + '"',
+        pageSize: 100,
+        pageToken: pageToken || undefined
+      })
+    });
+    if (!response.ok) {
+      const body = await response.text().catch(() => "");
+      let detail = body;
+      try { detail = JSON.parse(body).error?.message || body; } catch {}
+      if (response.status === 401) throw new Error("Google authorization expired. Reload the extension and authorize again.");
+      if (response.status === 403) throw new Error("Google Chat message search denied (403). Check the office account's Chat access, OAuth scopes, and Workspace admin restrictions. " + detail);
+      throw new Error("Google Chat message search error (" + response.status + "): " + detail);
+    }
+    const data = await response.json();
+    for (const item of (data.results || [])) {
+      if (item.message && containsWaybill(item.message, waybill)) results.push(item.message);
+    }
+    pageToken = data.nextPageToken || "";
+  } while (pageToken && results.length < 1000);
+
+  return results;
+}
+
+async function listMessagesAfterOccurrence(token, spaceName, createTime) {
+  if (!createTime) throw new Error("Google Chat returned a waybill message without a creation timestamp.");
+  const start = new Date(createTime);
+  const end = new Date(start.getTime() + 10 * 60 * 1000);
+  const filter = 'createTime > "' + start.toISOString() + '" AND createTime < "' + end.toISOString() + '"';
+  const all = [];
+  let pageToken = "";
+  do {
+    const data = await chatApi(token, spaceName + "/messages", {
+      pageSize: "1000",
+      filter,
+      pageToken
+    });
+    all.push(...(data.messages || []));
+    if (all.length >= 2000) break;
+    pageToken = data.nextPageToken || "";
+  } while (pageToken);
+  return all;
+}
+
+function findFollowingImage(timeline, waybill) {
+  const occurrenceIndex = timeline.findIndex((message) => containsWaybill(message, waybill));
+  if (occurrenceIndex < 0) return null;
+  for (let i = occurrenceIndex + 1; i < timeline.length; i++) {
+    if (hasAnyWaybill(timeline[i])) break;
+    const attachment = imageAttachment(timeline[i]);
+    if (attachment) return attachment;
+  }
+  return null;
 }
 
 function getOfficeAccountToken() {
@@ -98,24 +177,6 @@ async function findTargetSpace(token) {
   return null;
 }
 
-async function listAllMessages(token, spaceName) {
-  // Google Chat messages.list defaults to createTime ASC. Keep orderBy omitted:
-  // this avoids sending an unnecessary orderBy query parameter and preserves chronology.
-  const all = [];
-  let pageToken = "";
-  do {
-    const data = await chatApi(token, spaceName + "/messages", {
-      pageSize: "1000",
-      pageToken
-    });
-    all.push(...(data.messages || []));
-    if (all.length > MAX_MESSAGES_TO_SCAN) {
-      throw new Error("SHIP PIC3 has more than " + MAX_MESSAGES_TO_SCAN + " messages. Narrowing the scan safely needs a date range; no partial match was used.");
-    }
-    pageToken = data.nextPageToken || "";
-  } while (pageToken);
-  return all;
-}
 
 function messageText(message) {
   return String(message.text || message.formattedText || "")
@@ -139,25 +200,6 @@ function imageAttachment(message) {
     String(item.contentType || "").toLowerCase().startsWith("image/") &&
     item.attachmentDataRef?.resourceName
   );
-}
-
-function findFirstValidOccurrence(messages, waybill) {
-  for (let i = 0; i < messages.length; i++) {
-    if (!containsWaybill(messages[i], waybill)) continue;
-
-    // An image attached to the waybill message itself is a valid match.
-    const sameMessageImage = imageAttachment(messages[i]);
-    if (sameMessageImage) return { index: i, attachment: sameMessageImage };
-
-    // Otherwise inspect following messages in timeline order. A different
-    // shipment number is a hard boundary, regardless of who posted it.
-    for (let j = i + 1; j < messages.length; j++) {
-      if (hasAnyWaybill(messages[j])) break;
-      const attachment = imageAttachment(messages[j]);
-      if (attachment) return { index: j, attachment };
-    }
-  }
-  return null;
 }
 
 async function downloadMessageImage(token, attachment) {
