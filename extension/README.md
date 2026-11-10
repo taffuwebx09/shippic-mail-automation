@@ -25,3 +25,7 @@ Enable Google Chat API in the Cloud project. For photos attached as Google Drive
 ## Performance
 
 The extension caches the SHIP PIC3 space resource name in Chrome local extension storage after the first successful lookup, reuses full search results, and requests following messages in 25-message pages. Search time still depends on Google Chat response latency and photo download size.
+
+## Multiple photos per waybill
+
+The extension returns up to two downloadable image attachments for a valid waybill match. It can collect both attachments from one Chat message or from adjacent messages before the next different waybill. Additional images are ignored, and the response retains the original `imageDataUrl` field for compatibility alongside the new `imageDataUrls` array.
