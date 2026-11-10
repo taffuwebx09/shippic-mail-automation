@@ -35,11 +35,11 @@ function loadBackground(fetchImpl = async () => { throw new Error("Unexpected fe
 
 const targetWaybill = "14931338241691";
 const uploadedImage = {
-  name: "spaces/test/messages/photo/attachments/abc",
+  name: "spaces/ship-pic3/messages/photo-1/attachments/abc",
   contentType: "image/jpeg",
   contentName: "shipment.jpg",
   source: "UPLOADED_CONTENT",
-  attachmentDataRef: { resourceName: "spaces/test/messages/photo/attachments/abc" }
+  attachmentDataRef: { resourceName: "spaces/ship-pic3/messages/photo-1/attachments/abc" }
 };
 
 test("detects Google Chat's singular attachment array", () => {
