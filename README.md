@@ -40,4 +40,4 @@ Enable the Google Chat API and, for Drive-backed attachments, the Google Drive A
 
 ## Fast lookup behavior
 
-After the first successful lookup, the extension caches the SHIP PIC3 space resource name locally. Searches reuse the cached space to avoid re-listing all spaces. Google Chat's full search result is reused without an extra message-get request, and following messages are fetched in smaller pages (100) so nearby photo attachments can be found quickly. Actual response time depends on Google, office network latency, and image size.
+After the first successful lookup, the extension caches the SHIP PIC3 space resource name locally. Searches reuse the cached space to avoid re-listing all spaces. Google Chat's full search result is reused without an extra message-get request, and following messages are fetched in small pages (25) so nearby photo attachments can be found quickly. Actual response time depends on Google, office network latency, and image size.
