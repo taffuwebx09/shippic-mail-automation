@@ -50,3 +50,5 @@ ShipPic collects up to two downloadable image attachments for the first valid wa
 ## Multi-image shipment preview
 
 For each waybill, the website displays up to two matching shipment photos. Additional images are ignored, and matching stops at the next different waybill.
+
+Multi-image regression coverage verifies the two-photo cap for direct attachments and adjacent message photos.
