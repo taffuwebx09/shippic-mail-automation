@@ -31,7 +31,8 @@ export default function App() {
         setBusy(false);
         if (d.imageDataUrl) {
           setImage({ url: d.imageDataUrl, waybill: d.waybill || waybill });
-          setNotice({ kind: "success", text: "Shipment photo received and displayed here." });
+          const seconds = Number.isFinite(d.durationMs) ? (d.durationMs / 1000).toFixed(1) : null;
+          setNotice({ kind: "success", text: seconds ? `Shipment photo received in ${seconds}s.` : "Shipment photo received and displayed here." });
         } else {
           setNotice({ kind: "error", text: d.message || "No shipment photo was found." });
         }
