@@ -206,7 +206,8 @@ test("collects at most two photos when one Chat message has four image attachmen
   }));
   const images = api.imageAttachments({ attachment: four });
   assert.equal(images.length, 4);
-  assert.deepEqual(images.slice(0, 2).map((item) => item.name), ["attachment-1", "attachment-2"]);
+  assert.equal(images[0].name, "attachment-1");
+  assert.equal(images[1].name, "attachment-2");
 });
 
 test("collects two photos across adjacent messages and stops at a different waybill", async () => {
@@ -219,7 +220,9 @@ test("collects two photos across adjacent messages and stops at a different wayb
   ] }) }));
   const found = await api.findFollowingImagesInSpace("token", "spaces/s",
     { name: "awb", createTime: "2026-11-10T01:00:00Z" }, targetWaybill);
-  assert.deepEqual(found.map((item) => item.name), ["one", "two"]);
+  assert.equal(found.length, 2);
+  assert.equal(found[0].name, "one");
+  assert.equal(found[1].name, "two");
 });
 
 test("keeps the existing singular image helper backward-compatible", () => {
