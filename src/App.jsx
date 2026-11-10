@@ -12,6 +12,7 @@ export default function App() {
   const [extensionVersion, setExtensionVersion] = useState("");
   const [notice, setNotice] = useState({ kind: "info", text: "Enter a waybill number. Install the companion extension to search your private Google Chat group." });
   const inputRef = useRef(null);
+  const searchTimeoutRef = useRef(null);
 
   useEffect(() => {
     const onMessage = (event) => {
@@ -26,6 +27,7 @@ export default function App() {
         setNotice({ kind: "info", text: "Searching SHIP PIC3 in the background…" });
       }
       if (d.type === "SEARCH_RESULT") {
+        clearTimeout(searchTimeoutRef.current);
         setBusy(false);
         if (d.imageDataUrl) {
           setImage({ url: d.imageDataUrl, waybill: d.waybill || waybill });
@@ -35,13 +37,17 @@ export default function App() {
         }
       }
       if (d.type === "SEARCH_ERROR") {
+        clearTimeout(searchTimeoutRef.current);
         setBusy(false);
         setNotice({ kind: "error", text: d.message || "Background lookup failed. Check the extension and Google Chat sign-in." });
       }
     };
     window.addEventListener("message", onMessage);
     window.postMessage({ source: "shippic-web", type: "PING_EXTENSION" }, window.location.origin);
-    return () => window.removeEventListener("message", onMessage);
+    return () => {
+      window.removeEventListener("message", onMessage);
+      clearTimeout(searchTimeoutRef.current);
+    };
   }, []);
 
   const searchShipment = () => {
@@ -54,6 +60,11 @@ export default function App() {
     setImage(null);
     setBusy(true);
     setNotice({ kind: "info", text: "Starting background lookup in SHIP PIC3…" });
+    clearTimeout(searchTimeoutRef.current);
+    searchTimeoutRef.current = setTimeout(() => {
+      setBusy(false);
+      setNotice({ kind: "error", text: "Search timed out after 90 seconds. Reload this page and the extension, then try again. If it repeats, check the extension service worker console." });
+    }, 90000);
     window.postMessage({ source: "shippic-web", type: "SEARCH_WAYBILL", waybill: number }, window.location.origin);
   };
 
