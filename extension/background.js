@@ -117,7 +117,11 @@ async function findFollowingImageInSpace(token, spaceName, occurrence, waybill) 
     }
     for (const message of messages) {
       if (message.name === occurrence.name) continue;
-      if (hasAnyWaybill(message)) return null;
+
+      // Repeated appearances of the same target waybill are not a boundary.
+      // A different waybill is a hard stop, even if that message has an image.
+      const repeatsTargetWaybill = containsWaybill(message, waybill);
+      if (hasAnyWaybill(message) && !repeatsTargetWaybill) return null;
 
       const attachment = imageAttachment(message);
       if (attachment) return attachment;
