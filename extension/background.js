@@ -18,6 +18,7 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
 });
 
 async function lookupShipmentPhoto(waybill) {
+  const lookupStartedAt = Date.now();
   const token = await getOfficeAccountToken();
   const space = await findTargetSpace(token);
   if (!space) {
@@ -35,30 +36,35 @@ async function lookupShipmentPhoto(waybill) {
   // the project's first-valid-occurrence rule.
   matches.sort((a, b) => new Date(a.createTime || 0) - new Date(b.createTime || 0));
 
-  for (const searchMatch of matches) {
-    const occurrence = await getFullMessage(token, searchMatch);
+  // SEARCH_MESSAGES_VIEW_FULL already returns the complete Message resource.
+  // Reuse it directly instead of making another round-trip for every result.
+  for (const occurrence of matches) {
     const directImage = imageAttachment(occurrence);
     if (directImage) {
       const photo = await downloadMessageImage(token, directImage);
-      return { imageDataUrl: photo, waybill, message: "Shipment photo retrieved from the waybill message in SHIP PIC3." };
+      return {
+        imageDataUrl: photo,
+        waybill,
+        durationMs: Date.now() - lookupStartedAt,
+        message: "Shipment photo retrieved from the waybill message in SHIP PIC3."
+      };
     }
 
     const candidate = await findFollowingImageInSpace(token, space.name, occurrence, waybill);
     if (candidate) {
       const photo = await downloadMessageImage(token, candidate);
-      return { imageDataUrl: photo, waybill, message: "Shipment photo retrieved from the first valid SHIP PIC3 timeline match." };
+      return {
+        imageDataUrl: photo,
+        waybill,
+        durationMs: Date.now() - lookupStartedAt,
+        message: "Shipment photo retrieved from the first valid SHIP PIC3 timeline match."
+      };
     }
   }
 
   throw new Error("Waybill was found in SHIP PIC3, but no downloadable image attachment was found before the next waybill message. Confirm the photo is uploaded directly in Chat or is an accessible Drive file.");
 }
 
-async function getFullMessage(token, message) {
-  if (!message?.name) throw new Error("Google Chat search returned a result without a message resource name.");
-  // Search results may be a reduced representation. Fetch the canonical
-  // Message resource to reliably get its singular attachment[] field.
-  return chatApi(token, message.name);
-}
 
 async function searchWaybillMessages(token, waybill, spaceName) {
   const results = [];
@@ -105,7 +111,7 @@ async function findFollowingImageInSpace(token, spaceName, occurrence, waybill) 
   let scanned = 0;
   do {
     const data = await chatApi(token, spaceName + "/messages", {
-      pageSize: "1000",
+      pageSize: "100",
       filter: 'createTime > "' + occurrence.createTime + '"',
       pageToken
     });
@@ -180,15 +186,42 @@ async function chatApi(token, path, params = {}) {
 }
 
 async function findTargetSpace(token) {
+  const cachedSpaceName = await getCachedSpaceName();
+  if (cachedSpaceName) {
+    return { name: cachedSpaceName, displayName: TARGET_SPACE_NAME };
+  }
+
   let pageToken = "";
   do {
     const data = await chatApi(token, "spaces", { pageSize: "1000", pageToken });
     const spaces = data.spaces || [];
     const match = spaces.find((space) => String(space.displayName || "").trim().toLocaleUpperCase() === TARGET_SPACE_NAME);
-    if (match) return match;
+    if (match) {
+      await cacheSpaceName(match.name);
+      return match;
+    }
     pageToken = data.nextPageToken || "";
   } while (pageToken);
   return null;
+}
+
+
+
+function getCachedSpaceName() {
+  return new Promise((resolve) => {
+    if (!chrome.storage?.local) return resolve("");
+    chrome.storage.local.get(["shippicTargetSpaceName"], (items) => {
+      if (chrome.runtime.lastError) return resolve("");
+      resolve(String(items?.shippicTargetSpaceName || ""));
+    });
+  });
+}
+
+function cacheSpaceName(spaceName) {
+  return new Promise((resolve) => {
+    if (!chrome.storage?.local) return resolve();
+    chrome.storage.local.set({ shippicTargetSpaceName: spaceName }, () => resolve());
+  });
 }
 
 
