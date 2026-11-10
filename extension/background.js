@@ -35,7 +35,8 @@ async function lookupShipmentPhoto(waybill) {
   // the project's first-valid-occurrence rule.
   matches.sort((a, b) => new Date(a.createTime || 0) - new Date(b.createTime || 0));
 
-  for (const occurrence of matches) {
+  for (const searchMatch of matches) {
+    const occurrence = await getFullMessage(token, searchMatch);
     const directImage = imageAttachment(occurrence);
     if (directImage) {
       const photo = await downloadMessageImage(token, directImage);
@@ -49,7 +50,14 @@ async function lookupShipmentPhoto(waybill) {
     }
   }
 
-  throw new Error("Waybill was found in SHIP PIC3, but no image was found before the next waybill message. Check whether the photo is posted as a separate image attachment.");
+  throw new Error("Waybill was found in SHIP PIC3, but no downloadable image attachment was found before the next waybill message. Confirm the photo is uploaded directly in Chat or is an accessible Drive file.");
+}
+
+async function getFullMessage(token, message) {
+  if (!message?.name) throw new Error("Google Chat search returned a result without a message resource name.");
+  // Search results may be a reduced representation. Fetch the canonical
+  // Message resource to reliably get its singular attachment[] field.
+  return chatApi(token, message.name);
 }
 
 async function searchWaybillMessages(token, waybill, spaceName) {
@@ -98,8 +106,7 @@ async function findFollowingImageInSpace(token, spaceName, occurrence, waybill) 
   do {
     const data = await chatApi(token, spaceName + "/messages", {
       pageSize: "1000",
-      filter: 'createTime > "' + new Date(occurrence.createTime).toISOString() + '"',
-      orderBy: "ASC",
+      filter: 'createTime > "' + occurrence.createTime + '"',
       pageToken
     });
 
@@ -199,18 +206,25 @@ function hasAnyWaybill(message) {
 }
 
 function imageAttachment(message) {
-  const attachments = Array.isArray(message.attachments) ? message.attachments : [];
+  // Google Chat REST Message schema uses "attachment" (singular array).
+  // Accept "attachments" too for compatibility with older/mock payloads.
+  const attachments = [
+    ...(Array.isArray(message.attachment) ? message.attachment : []),
+    ...(Array.isArray(message.attachments) ? message.attachments : [])
+  ];
+
   return attachments.find((item) => {
     const contentType = String(item.contentType || "").toLowerCase();
     const fileName = String(item.contentName || "").toLowerCase();
     const looksLikeImage = contentType.startsWith("image/") ||
       /\\.(jpe?g|png|gif|webp|bmp|heic|heif)$/i.test(fileName);
+
+    // Only accept attachments that have a supported downloadable data ref.
     return looksLikeImage && Boolean(
       item.attachmentDataRef?.resourceName ||
-      item.driveDataRef?.driveFileId ||
-      item.name
+      item.driveDataRef?.driveFileId
     );
-  });
+  }) || null;
 }
 
 async function downloadMessageImage(token, attachment) {
