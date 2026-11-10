@@ -44,7 +44,10 @@ async function lookupShipmentPhoto(waybill) {
     }
 
     const following = await listMessagesAfterOccurrence(token, space.name, occurrence.createTime);
-    const timeline = [occurrence, ...following].sort((a, b) => new Date(a.createTime || 0) - new Date(b.createTime || 0));
+    // The inclusive timestamp filter can return the original message again.
+    // Remove it so it cannot be mistaken for the next waybill boundary.
+    const nextMessages = following.filter((message) => message.name !== occurrence.name);
+    const timeline = [occurrence, ...nextMessages].sort((a, b) => new Date(a.createTime || 0) - new Date(b.createTime || 0));
     const candidate = findFollowingImage(timeline, waybill);
     if (candidate) {
       const photo = await downloadMessageImage(token, candidate);
@@ -69,6 +72,7 @@ async function searchWaybillMessages(token, waybill, spaceName) {
       body: JSON.stringify({
         filter: '"' + waybill + '" AND space.name = "' + spaceName + '"',
         pageSize: 100,
+        view: "SEARCH_MESSAGES_VIEW_FULL",
         pageToken: pageToken || undefined
       })
     });
