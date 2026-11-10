@@ -1,11 +1,12 @@
 {
   "manifest_version": 3,
   "name": "ShipPic Mail Automation",
-  "version": "0.2.6",
+  "version": "0.2.7",
   "description": "Search a waybill in your signed-in SHIP PIC3 Google Chat group and return its related shipment photo.",
   "permissions": [
     "tabs",
-    "identity"
+    "identity",
+    "storage"
   ],
   "host_permissions": [
     "https://chat.google.com/*",
