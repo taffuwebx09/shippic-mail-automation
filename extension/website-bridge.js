@@ -24,7 +24,8 @@ window.addEventListener("message", (event) => {
           type: "SEARCH_RESULT",
           waybill: data.waybill,
           imageDataUrl: response.result.imageDataUrl,
-          message: response.result.message
+          message: response.result.message,
+          durationMs: response.result.durationMs
         }, window.location.origin);
       } else if (response?.error) {
         window.postMessage({ source: "shippic-extension", type: "SEARCH_ERROR", message: response.error }, window.location.origin);
