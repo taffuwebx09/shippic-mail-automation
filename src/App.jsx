@@ -6,7 +6,7 @@ const CHAT_URL = "https://chat.google.com/app/chat/AAAA88R6rOc";
 
 export default function App() {
   const [waybill, setWaybill] = useState("");
-  const [image, setImage] = useState(null);
+  const [images, setImages] = useState([]);
   const [busy, setBusy] = useState(false);
   const [connected, setConnected] = useState(false);
   const [extensionVersion, setExtensionVersion] = useState("");
@@ -29,10 +29,14 @@ export default function App() {
       if (d.type === "SEARCH_RESULT") {
         clearTimeout(searchTimeoutRef.current);
         setBusy(false);
-        if (d.imageDataUrl) {
-          setImage({ url: d.imageDataUrl, waybill: d.waybill || waybill });
+        const receivedImages = Array.isArray(d.imageDataUrls)
+          ? d.imageDataUrls.filter((url) => typeof url === "string" && url.startsWith("data:image/"))
+          : (d.imageDataUrl ? [d.imageDataUrl] : []);
+        if (receivedImages.length) {
+          setImages(receivedImages.slice(0, 2).map((url) => ({ url, waybill: d.waybill || waybill })));
           const seconds = Number.isFinite(d.durationMs) ? (d.durationMs / 1000).toFixed(1) : null;
-          setNotice({ kind: "success", text: seconds ? `Shipment photo received in ${seconds}s.` : "Shipment photo received and displayed here." });
+          const photoLabel = receivedImages.length === 1 ? "1 shipment photo" : "2 shipment photos";
+          setNotice({ kind: "success", text: seconds ? `${photoLabel} received in ${seconds}s.` : `${photoLabel} received and displayed here.` });
         } else {
           setNotice({ kind: "error", text: d.message || "No shipment photo was found." });
         }
@@ -58,7 +62,7 @@ export default function App() {
       return;
     }
     setWaybill(number);
-    setImage(null);
+    setImages([]);
     setBusy(true);
     setNotice({ kind: "info", text: "Starting background lookup in SHIP PIC3…" });
     clearTimeout(searchTimeoutRef.current);
@@ -82,7 +86,7 @@ export default function App() {
         <div className="lookup-search-row"><div className="lookup-input-wrap"><Search size={17}/><input ref={inputRef} id="waybill" value={waybill} onChange={e=>setWaybill(e.target.value)} onKeyDown={e=>e.key==="Enter"&&!busy&&searchShipment()} placeholder="e.g. 1490842594719645"/></div><button className="lookup-primary" disabled={busy} onClick={searchShipment}>{busy?"Searching…":<><Search size={16}/> Search shipment</>}</button></div>
         <div className="lookup-group"><span className="lookup-chat-mark">S</span><div><b>SHIP PIC3</b><small>Background Google Chat lookup · Exact waybill</small></div><a href={CHAT_URL} target="_blank" rel="noreferrer">Group link <ExternalLink size={13}/></a></div>
         <div className="capture-card">
-          {image ? <div className="preview-wrap"><div className="preview-toolbar"><div className="preview-file"><span className="file-icon"><Package size={16}/></span><div><b>Shipment image found</b><small>Waybill {image.waybill || waybill}</small></div></div><button className="icon-button" onClick={()=>setImage(null)} aria-label="Clear image"><X size={17}/></button></div><div className="image-stage"><img src={image.url} alt={`Shipment evidence for ${image.waybill || waybill}`} onError={() => { setImage(null); setNotice({ kind: "error", text: "The matched photo was received but the browser could not render it. Try searching again or inspect the image download response." }); }}/></div><div className="preview-footer"><span><CheckCircle2 size={16}/> Image ready for email</span><button className="text-button danger" onClick={()=>setImage(null)}>Clear image</button></div></div>
+          {images.length > 0 ? <div className="preview-wrap"><div className="preview-toolbar"><div className="preview-file"><span className="file-icon"><Package size={16}/></span><div><b>{images.length === 1 ? "Shipment image found" : `${images.length} shipment images found`}</b><small>Waybill {images[0].waybill || waybill}</small></div></div><button className="icon-button" onClick={()=>setImages([])} aria-label="Clear images"><X size={17}/></button></div><div className={`image-stage ${images.length > 1 ? "multiple" : "single"}`}>{images.map((item, index) => <img key={`${item.waybill}-${index}`} src={item.url} alt={`Shipment evidence ${index + 1} for ${item.waybill || waybill}`} onError={() => { setImages([]); setNotice({ kind: "error", text: "A matched photo was received but the browser could not render it. Try searching again or inspect the image download response." }); }}/>)}</div><div className="preview-footer"><span><CheckCircle2 size={16}/> {images.length} {images.length === 1 ? "image" : "images"} ready for email</span><button className="text-button danger" onClick={()=>setImages([])}>Clear images</button></div></div>
           : <div className="empty-state"><div className="upload-icon"><Package size={25}/></div><h3>Your shipment image will appear here</h3><p>Enter a waybill above and press <b>Search shipment</b>.<br/>ShipPic finds the matching photo in Google Chat and displays it here automatically.</p><div className="drop-hint">{busy ? "Looking for the matching shipment photo…" : "No manual upload needed."}</div></div>}
         </div>
         <div className={`notice ${notice.kind}`} role="status"><Sparkles size={17}/><span>{notice.text}</span></div>
