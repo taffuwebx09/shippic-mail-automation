@@ -9,7 +9,10 @@ const source = readFileSync(new URL("../extension/background.js", import.meta.ur
 
 function loadBackground(fetchImpl = async () => { throw new Error("Unexpected fetch"); }) {
   const context = {
-    chrome: { runtime: { onMessage: { addListener() {} }, lastError: null } },
+    chrome: {
+      runtime: { onMessage: { addListener() {} }, lastError: null },
+      identity: { getAuthToken: (_options, callback) => callback("test-token") }
+    },
     URL,
     Blob,
     Uint8Array,
@@ -23,7 +26,8 @@ function loadBackground(fetchImpl = async () => { throw new Error("Unexpected fe
       containsWaybill,
       findFollowingImageInSpace,
       blobToDataUrl,
-      downloadMessageImage
+      downloadMessageImage,
+      lookupShipmentPhoto
     };
   `, context);
   return context.__test;
@@ -111,4 +115,49 @@ test("downloads an uploaded Chat image through the Chat media endpoint", async (
 
 test("background no longer sends the rejected ASC orderBy argument", () => {
   assert.equal(source.includes('orderBy: "ASC"'), false);
+});
+
+
+test("runs the complete lookup and returns the downloaded Chat photo", async () => {
+  const requests = [];
+  const api = loadBackground(async (input, options = {}) => {
+    const url = new URL(input);
+    requests.push({ url, method: options.method || "GET", body: options.body });
+
+    if (url.pathname === "/v1/spaces") {
+      return { ok: true, json: async () => ({ spaces: [{ name: "spaces/ship-pic3", displayName: "SHIP PIC3" }] }) };
+    }
+    if (url.pathname === "/v1/spaces/-/messages:search") {
+      return { ok: true, json: async () => ({ results: [{
+        message: { name: "spaces/ship-pic3/messages/waybill-1", createTime: "2026-11-10T01:00:00.123456Z", text: targetWaybill }
+      }] }) };
+    }
+    if (url.pathname === "/v1/spaces/ship-pic3/messages/waybill-1") {
+      return { ok: true, json: async () => ({
+        name: "spaces/ship-pic3/messages/waybill-1",
+        createTime: "2026-11-10T01:00:00.123456Z",
+        text: targetWaybill,
+        attachment: []
+      }) };
+    }
+    if (url.pathname === "/v1/spaces/ship-pic3/messages") {
+      return { ok: true, json: async () => ({ messages: [{
+        name: "spaces/ship-pic3/messages/photo-1",
+        createTime: "2026-11-10T01:00:01.123456Z",
+        text: "",
+        attachment: [uploadedImage]
+      }] }) };
+    }
+    if (url.pathname.startsWith("/v1/media/")) {
+      return { ok: true, blob: async () => new Blob([new Uint8Array([9, 8, 7])], { type: "image/jpeg" }) };
+    }
+    throw new Error("Unexpected request: " + url.toString());
+  });
+
+  const result = await api.lookupShipmentPhoto(targetWaybill);
+  assert.equal(result.waybill, targetWaybill);
+  assert.equal(result.imageDataUrl, "data:image/jpeg;base64,CQgH");
+  assert.equal(requests.some((r) => r.url.searchParams.has("orderBy")), false);
+  assert.ok(requests.some((r) => r.url.pathname === "/v1/spaces/-/messages:search"));
+  assert.ok(requests.some((r) => r.url.pathname === "/v1/media/spaces/ship-pic3/messages/photo/attachments/abc"));
 });
