@@ -1,6 +1,7 @@
 const TARGET_SPACE_NAME = "SHIP PIC3";
 const MAX_FOLLOWING_MESSAGES = 5000;
 const MAX_IMAGE_BYTES = 12 * 1024 * 1024;
+const MAX_IMAGES_PER_WAYBILL = 2;
 
 chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
   if (message?.type === "SEARCH_WAYBILL") {
@@ -25,46 +26,50 @@ async function lookupShipmentPhoto(waybill) {
     throw new Error('Google Chat API could not find the named space "SHIP PIC3" for the authorized account. Confirm the office account is a member of that space.');
   }
 
-  // Search the server-side Chat index for this exact waybill in SHIP PIC3.
-  // This avoids downloading/paginating the entire 50k+ message history.
   const matches = await searchWaybillMessages(token, waybill, space.name);
   if (!matches.length) {
     throw new Error("No message containing this exact waybill was found in SHIP PIC3. Check the number and confirm it appears as message text.");
   }
 
-  // Search API returns newest first by default. Sort ascending to preserve
-  // the project's first-valid-occurrence rule.
   matches.sort((a, b) => new Date(a.createTime || 0) - new Date(b.createTime || 0));
 
-  // SEARCH_MESSAGES_VIEW_FULL already returns the complete Message resource.
-  // Reuse it directly instead of making another round-trip for every result.
   for (const occurrence of matches) {
-    const directImage = imageAttachment(occurrence);
-    if (directImage) {
-      const photo = await downloadMessageImage(token, directImage);
-      return {
-        imageDataUrl: photo,
-        waybill,
-        durationMs: Date.now() - lookupStartedAt,
-        message: "Shipment photo retrieved from the waybill message in SHIP PIC3."
-      };
+    // Start with every downloadable image attached to the exact waybill message.
+    const directImages = imageAttachments(occurrence).slice(0, MAX_IMAGES_PER_WAYBILL);
+    const candidates = directImages.length >= MAX_IMAGES_PER_WAYBILL
+      ? directImages
+      : await findFollowingImagesInSpace(token, space.name, occurrence, waybill, directImages);
+
+    if (!candidates.length) continue;
+
+    // Download at most two matched photos in parallel. Keep one successful
+    // image even if the second attachment is inaccessible.
+    const downloads = await Promise.allSettled(
+      candidates.slice(0, MAX_IMAGES_PER_WAYBILL).map((attachment) => downloadMessageImage(token, attachment))
+    );
+    const imageDataUrls = downloads
+      .filter((item) => item.status === "fulfilled")
+      .map((item) => item.value);
+
+    if (!imageDataUrls.length) {
+      const firstFailure = downloads.find((item) => item.status === "rejected");
+      throw new Error(firstFailure?.reason?.message || "The matched shipment photos could not be downloaded.");
     }
 
-    const candidate = await findFollowingImageInSpace(token, space.name, occurrence, waybill);
-    if (candidate) {
-      const photo = await downloadMessageImage(token, candidate);
-      return {
-        imageDataUrl: photo,
-        waybill,
-        durationMs: Date.now() - lookupStartedAt,
-        message: "Shipment photo retrieved from the first valid SHIP PIC3 timeline match."
-      };
-    }
+    const photoCount = imageDataUrls.length;
+    return {
+      imageDataUrls,
+      imageDataUrl: imageDataUrls[0],
+      waybill,
+      durationMs: Date.now() - lookupStartedAt,
+      message: photoCount === 1
+        ? "1 shipment photo retrieved from SHIP PIC3."
+        : photoCount + " shipment photos retrieved from SHIP PIC3."
+    };
   }
 
-  throw new Error("Waybill was found in SHIP PIC3, but no downloadable image attachment was found before the next waybill message. Confirm the photo is uploaded directly in Chat or is an accessible Drive file.");
+  throw new Error("Waybill was found in SHIP PIC3, but no downloadable image attachment was found before the next different waybill message.");
 }
-
 
 async function searchWaybillMessages(token, waybill, spaceName) {
   const results = [];
@@ -102,11 +107,13 @@ async function searchWaybillMessages(token, waybill, spaceName) {
   return results;
 }
 
-async function findFollowingImageInSpace(token, spaceName, occurrence, waybill) {
+async function findFollowingImagesInSpace(token, spaceName, occurrence, waybill, initialImages = []) {
   if (!occurrence.createTime) throw new Error("Google Chat returned a waybill message without a creation timestamp.");
 
-  // Do not impose an arbitrary 10-minute cutoff. Walk forward in chronological
-  // pages until the next waybill boundary or the first image attachment.
+  const found = [...initialImages].slice(0, MAX_IMAGES_PER_WAYBILL);
+  const seen = new Set(found.map(attachmentIdentity));
+  if (found.length >= MAX_IMAGES_PER_WAYBILL) return found;
+
   let pageToken = "";
   let scanned = 0;
   do {
@@ -119,26 +126,45 @@ async function findFollowingImageInSpace(token, spaceName, occurrence, waybill) 
     const messages = data.messages || [];
     scanned += messages.length;
     if (scanned > MAX_FOLLOWING_MESSAGES) {
+      if (found.length) return found;
       throw new Error("The waybill was found, but more than " + MAX_FOLLOWING_MESSAGES + " later messages appeared before a photo or next waybill. No potentially wrong photo was selected.");
     }
+
     for (const message of messages) {
       if (message.name === occurrence.name) continue;
 
-      // Repeated appearances of the same target waybill are not a boundary.
-      // A different waybill is a hard stop, even if that message has an image.
-      if (hasDifferentWaybill(message, waybill)) return null;
+      // A different waybill is a hard boundary. Do not use any images after it.
+      if (hasDifferentWaybill(message, waybill)) return found;
 
-      const attachment = imageAttachment(message);
-      if (attachment) return attachment;
+      for (const attachment of imageAttachments(message)) {
+        const identity = attachmentIdentity(attachment);
+        if (!seen.has(identity)) {
+          found.push(attachment);
+          seen.add(identity);
+        }
+        if (found.length >= MAX_IMAGES_PER_WAYBILL) return found;
+      }
     }
 
-    if (!data.nextPageToken) return null;
-    // Avoid silently scanning an unbounded space when no next waybill is present.
-    if (messages.length === 0) return null;
-    pageToken = data.nextPageToken || "";
+    if (!data.nextPageToken || messages.length === 0) return found;
+    pageToken = data.nextPageToken;
   } while (pageToken);
 
-  return null;
+  return found;
+}
+
+// Backward-compatible helper for older callers/tests that expect one photo.
+async function findFollowingImageInSpace(token, spaceName, occurrence, waybill) {
+  const images = await findFollowingImagesInSpace(token, spaceName, occurrence, waybill);
+  return images[0] || null;
+}
+
+function attachmentIdentity(attachment) {
+  return attachment.attachmentDataRef?.resourceName ||
+    attachment.driveDataRef?.driveFileId ||
+    attachment.name ||
+    attachment.contentName ||
+    JSON.stringify(attachment);
 }
 
 function getOfficeAccountToken() {
@@ -250,7 +276,7 @@ function hasDifferentWaybill(message, targetWaybill) {
   return extractWaybills(message).some((value) => value !== targetWaybill);
 }
 
-function imageAttachment(message) {
+function imageAttachments(message) {
   // Google Chat REST Message schema uses "attachment" (singular array).
   // Accept "attachments" too for compatibility with older/mock payloads.
   const attachments = [
@@ -258,18 +284,22 @@ function imageAttachment(message) {
     ...(Array.isArray(message.attachments) ? message.attachments : [])
   ];
 
-  return attachments.find((item) => {
+  return attachments.filter((item) => {
     const contentType = String(item.contentType || "").toLowerCase();
     const fileName = String(item.contentName || "").toLowerCase();
     const looksLikeImage = contentType.startsWith("image/") ||
       /\.(jpe?g|png|gif|webp|bmp|heic|heif)$/i.test(fileName);
 
-    // Only accept attachments that have a supported downloadable data ref.
     return looksLikeImage && Boolean(
       item.attachmentDataRef?.resourceName ||
       item.driveDataRef?.driveFileId
     );
-  }) || null;
+  });
+}
+
+// Backward-compatible singular helper.
+function imageAttachment(message) {
+  return imageAttachments(message)[0] || null;
 }
 
 async function downloadMessageImage(token, attachment) {
