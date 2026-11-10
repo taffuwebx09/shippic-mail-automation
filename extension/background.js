@@ -94,13 +94,14 @@ async function listMessagesAfterOccurrence(token, spaceName, createTime) {
   if (!createTime) throw new Error("Google Chat returned a waybill message without a creation timestamp.");
   const start = new Date(createTime);
   const end = new Date(start.getTime() + 10 * 60 * 1000);
-  const filter = 'createTime > "' + start.toISOString() + '" AND createTime < "' + end.toISOString() + '"';
+  const filter = 'createTime >= "' + start.toISOString() + '" AND createTime < "' + end.toISOString() + '"';
   const all = [];
   let pageToken = "";
   do {
     const data = await chatApi(token, spaceName + "/messages", {
       pageSize: "1000",
       filter,
+      orderBy: "createTime ASC",
       pageToken
     });
     all.push(...(data.messages || []));
