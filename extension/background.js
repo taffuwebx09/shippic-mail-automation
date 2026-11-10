@@ -120,8 +120,7 @@ async function findFollowingImageInSpace(token, spaceName, occurrence, waybill) 
 
       // Repeated appearances of the same target waybill are not a boundary.
       // A different waybill is a hard stop, even if that message has an image.
-      const repeatsTargetWaybill = containsWaybill(message, waybill);
-      if (hasAnyWaybill(message) && !repeatsTargetWaybill) return null;
+      if (hasDifferentWaybill(message, waybill)) return null;
 
       const attachment = imageAttachment(message);
       if (attachment) return attachment;
@@ -205,8 +204,17 @@ function containsWaybill(message, waybill) {
   return text.split(/\D+/).includes(waybill);
 }
 
-function hasAnyWaybill(message) {
-  return /(?:^|\D)\d{8,25}(?:\D|$)/.test(messageText(message));
+function extractWaybills(message) {
+  const values = [];
+  const pattern = /(?:^|\D)(\d{8,25})(?=\D|$)/g;
+  const text = messageText(message);
+  let match;
+  while ((match = pattern.exec(text)) !== null) values.push(match[1]);
+  return values;
+}
+
+function hasDifferentWaybill(message, targetWaybill) {
+  return extractWaybills(message).some((value) => value !== targetWaybill);
 }
 
 function imageAttachment(message) {
@@ -257,7 +265,7 @@ async function downloadMessageImage(token, attachment) {
   if (!response.ok) {
     const detail = await response.text().catch(() => "");
     if (response.status === 401) throw new Error("Google authorization expired while downloading the photo. Reload the extension and authorize again.");
-    if (response.status === 403 && driveFileId) throw new Error("Google Drive denied access to the photo (403). Confirm the office account can open the file and that Google Drive API is enabled.");
+    if (response.status === 403 && driveFileId) throw new Error("Google Drive denied access to the photo (403). Confirm the office account can open the file, Google Drive API is enabled, and the extension was re-authorized with drive.readonly scope.");
     throw new Error("Google could not download the matched image (" + response.status + "). " + detail.slice(0, 300));
   }
 
