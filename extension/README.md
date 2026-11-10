@@ -21,3 +21,7 @@ This companion extension links the Vercel ShipPic page to your signed-in Google 
 ## Required APIs and OAuth scopes
 
 Enable Google Chat API in the Cloud project. For photos attached as Google Drive files, also enable Google Drive API and add the `drive.readonly` scope to the OAuth consent screen's Data Access section. The office account must have permission to open the file. After changing scopes, remove/reload the extension and complete Google authorization again.
+
+## Performance
+
+The extension caches the SHIP PIC3 space resource name in Chrome local extension storage after the first successful lookup, reuses full search results, and requests following messages in 100-message pages. Search time still depends on Google Chat response latency and photo download size.
