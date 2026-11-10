@@ -28,3 +28,12 @@ Framework preset: Vite. Build command: `npm run build`. Output directory: `dist`
 - Verify matching behavior with the actual SHIP PIC3 DOM.
 - Reliably associate separate adjacent image messages to waybill messages.
 - Add Excel shipment details, email body, embedded photo, and signature.
+
+## Google OAuth and image attachments
+
+The extension uses the office account's Google Chat access. The OAuth consent configuration must include:
+- `https://www.googleapis.com/auth/chat.spaces.readonly`
+- `https://www.googleapis.com/auth/chat.messages.readonly`
+- `https://www.googleapis.com/auth/drive.readonly` (only needed when the matching Chat attachment is a Google Drive file)
+
+Enable the Google Chat API and, for Drive-backed attachments, the Google Drive API in the same Cloud project. After changing OAuth scopes, re-load the extension and authorize again with the office account. Drive access is subject to the office account's file permissions and Workspace administrator policies.
