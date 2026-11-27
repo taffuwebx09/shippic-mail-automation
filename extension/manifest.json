@@ -31,7 +31,7 @@
     }
   ],
   "oauth2": {
-    "client_id": "205073918531-akab1sajlrb99a5f112imvr0b0j0idbc.apps.googleusercontent.com",
+    "client_id": "205073918531-q89oesogvuid7v03gq7s5jumcs6cra0i.apps.googleusercontent.com",
     "scopes": [
       "https://www.googleapis.com/auth/chat.spaces.readonly",
       "https://www.googleapis.com/auth/chat.messages.readonly",
