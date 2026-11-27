@@ -52,3 +52,13 @@ ShipPic collects up to two downloadable image attachments for the first valid wa
 For each waybill, the website displays up to two matching shipment photos. Additional images are ignored, and matching stops at the next different waybill.
 
 Multi-image regression coverage verifies the two-photo cap for direct attachments and adjacent message photos.
+
+
+## Stable extension identity
+
+ShipPic v0.3.0 pins a stable Chrome Extension ID using the public key in `extension/manifest.json`.
+
+- Key label: `tafajjul-aouto-mail-key09`
+- Stable Extension ID: `pmnoflgocnppbaeonnlgkpnllhmpnehl`
+- The matching private PEM key is intentionally kept outside this repository. Keep your separate backup secure and never commit or share it publicly.
+- Register the stable Extension ID as the Chrome Extension OAuth client's Item ID in Google Cloud before installing v0.3.0 on the computers.
