@@ -1,7 +1,7 @@
 {
   "manifest_version": 3,
   "name": "ShipPic Mail Automation",
-  "version": "0.2.9",
+  "version": "0.3.0",
   "description": "Search a waybill in your signed-in SHIP PIC3 Google Chat group and return its related shipment photo.",
   "permissions": [
     "tabs",
@@ -37,5 +37,6 @@
       "https://www.googleapis.com/auth/chat.messages.readonly",
       "https://www.googleapis.com/auth/drive.readonly"
     ]
-  }
+  },
+  "key": "MIIBIjANBgkqhkiG9w0BAQEFAAOCAQ8AMIIBCgKCAQEAtYUOOacVNFJyGzpiovmxHr26GC1H0orKCJnGbplJARwRH6A4N0U6ZsRQe3S6nwumVMB4rHP3Qdj9Lwneur/pMqcEAZLX4oN1NpVdYHK+eCrE0+7jROsWxAbYcrdu+zD1oP2r/D9+kYsoViU6yt++KWvp+VP40TMdhrqC44HljGYWBGzC+bdzA2fil74uPRU25XsXZr2uTTluRSHvN4yJjkZC2dIxk6zQXd6vA4unNv9qvt51RBxnMzsIbLLDpS0IGn5ZoTdAsq6AKZPUJUJaLlCQYhpIJ3Vo5mIq8RJBRfYzpLDZLC4hHHiUy26+dPAt4CdUN8EC62N12d30AqcYVwIDAQAB"
 }
