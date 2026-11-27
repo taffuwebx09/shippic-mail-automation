@@ -61,4 +61,7 @@ ShipPic v0.3.0 pins a stable Chrome Extension ID using the public key in `extens
 - Key label: `tafajjul-aouto-mail-key09`
 - Stable Extension ID: `pmnoflgocnppbaeonnlgkpnllhmpnehl`
 - The matching private PEM key is intentionally kept outside this repository. Keep your separate backup secure and never commit or share it publicly.
-- Register the stable Extension ID as the Chrome Extension OAuth client's Item ID in Google Cloud before installing v0.3.0 on the computers.
+- The stable Extension ID is registered in Google Cloud. The manifest uses the matching OAuth client ID created for this stable extension.
+
+
+Stable OAuth client ID: `205073918531-q89oesogvuid7v03gq7s5jumcs6cra0i.apps.googleusercontent.com`.
